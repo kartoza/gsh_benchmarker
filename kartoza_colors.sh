@@ -1,0 +1,50 @@
+#!/bin/bash
+# Kartoza Color Scheme
+# Source this file in scripts to use consistent Kartoza branding
+
+# Kartoza brand colors
+export KARTOZA_HIGHLIGHT1="#DF9E2F"  # yellow/orange
+export KARTOZA_HIGHLIGHT2="#569FC6"  # blue
+export KARTOZA_HIGHLIGHT3="#8A8B8B"  # grey
+export KARTOZA_HIGHLIGHT4="#06969A"  # teal
+export KARTOZA_ALERT="#CC0403"       # red
+
+# Gum theme configuration using Kartoza colors
+export GUM_INPUT_CURSOR_FOREGROUND="$KARTOZA_HIGHLIGHT1"
+export GUM_INPUT_PROMPT_FOREGROUND="$KARTOZA_HIGHLIGHT1"
+export GUM_INPUT_PLACEHOLDER_FOREGROUND="$KARTOZA_HIGHLIGHT3"
+export GUM_INPUT_WIDTH="80"
+
+export GUM_CHOOSE_CURSOR_FOREGROUND="$KARTOZA_HIGHLIGHT1"
+export GUM_CHOOSE_SELECTED_FOREGROUND="$KARTOZA_HIGHLIGHT4"
+export GUM_CHOOSE_UNSELECTED_FOREGROUND="$KARTOZA_HIGHLIGHT3"
+
+export GUM_CONFIRM_PROMPT_FOREGROUND="$KARTOZA_HIGHLIGHT2"
+export GUM_CONFIRM_SELECTED_FOREGROUND="$KARTOZA_HIGHLIGHT4"
+export GUM_CONFIRM_UNSELECTED_FOREGROUND="$KARTOZA_HIGHLIGHT3"
+
+export GUM_SPIN_SPINNER_FOREGROUND="$KARTOZA_HIGHLIGHT1"
+export GUM_SPIN_TITLE_FOREGROUND="$KARTOZA_HIGHLIGHT2"
+
+export GUM_STYLE_FOREGROUND="$KARTOZA_HIGHLIGHT2"
+export GUM_STYLE_BORDER_FOREGROUND="$KARTOZA_HIGHLIGHT4"
+
+# Rich theme configuration for Python scripts
+export RICH_THEME_PRIMARY="$KARTOZA_HIGHLIGHT2"      # blue
+export RICH_THEME_SECONDARY="$KARTOZA_HIGHLIGHT1"    # yellow/orange  
+export RICH_THEME_ACCENT="$KARTOZA_HIGHLIGHT4"       # teal
+export RICH_THEME_MUTED="$KARTOZA_HIGHLIGHT3"        # grey
+export RICH_THEME_ERROR="$KARTOZA_ALERT"             # red
+
+# Helper function to create a rich theme string for Python
+rich_theme_string() {
+    cat << EOF
+{
+    "primary": "$KARTOZA_HIGHLIGHT2",
+    "secondary": "$KARTOZA_HIGHLIGHT1", 
+    "accent": "$KARTOZA_HIGHLIGHT4",
+    "muted": "$KARTOZA_HIGHLIGHT3",
+    "error": "$KARTOZA_ALERT"
+}
+EOF
+}
