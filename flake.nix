@@ -6,18 +6,30 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        
-        python-with-packages = pkgs.python3.withPackages (p: with p; [
-          requests
-          pyyaml
-          click
-          rich
-          httpx
-        ]);
+
+        python-with-packages = pkgs.python3.withPackages (
+          p: with p; [
+            requests
+            pyyaml
+            click
+            rich
+            httpx
+            pandas
+            matplotlib
+            seaborn
+            reportlab
+          ]
+        );
 
       in
       {
@@ -27,51 +39,50 @@
             git
             curl
             jq
-            
-            # HTTP/API testing tools
+
+            apacheHttpd # HTTP/API testing tools
             httpie
             hurl
-            
+
             # Benchmarking tools
-            apache-bench
-            
+
             # Python environment with GeoServer libraries
             python-with-packages
-            
-            o# Java development (for GeoServer Java client)
+
+            orbitron # Java development (for GeoServer Java client)
             openjdk17
             maven
-            
+
             # Additional useful tools
             tree
             ripgrep
             fd
-            
+
             # Network debugging
             netcat-openbsd
             nmap
-            
+
             # JSON/XML processing
             yq-go
             xmlstarlet
-            
+
             # Documentation and notes
             pandoc
-            
+
             # Rust toolchain for building ATAC
             cargo
             rustc
-            
+
             # Beautiful TUI components
             gum
-            
+
             # Image display in terminal
             chafa
-            
+
             # Image processing for map previews
             imagemagick
           ];
-          
+
           shellHook = ''
             echo "🌍 GeoServer Development Environment"
             echo "================================================"
@@ -97,10 +108,11 @@
             echo "  cargo install atac"
             echo "================================================"
           '';
-          
+
           # Environment variables
           GEOSERVER_URL = "https://climate-adaptation-services.geospatialhosting.com/geoserver";
           GEOSERVER_WMS_URL = "https://climate-adaptation-services.geospatialhosting.com/geoserver/wms";
         };
-      });
+      }
+    );
 }

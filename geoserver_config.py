@@ -10,7 +10,6 @@ from requests.auth import HTTPBasicAuth
 import sys
 import os
 from urllib.parse import quote
-from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
@@ -19,7 +18,8 @@ from rich.text import Text
 from rich.live import Live
 import time
 
-console = Console()
+# Import Kartoza themed console
+from kartoza_rich_theme import console, print_info, print_warning, print_error, print_success, print_header
 
 class GeoServerClient:
     def __init__(self, base_url, username, password):
