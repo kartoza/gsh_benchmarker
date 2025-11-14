@@ -1,0 +1,37 @@
+# Credentials and sensitive files
+credentials.json
+*.log
+*.data
+*.csv
+
+# Load test results
+results/
+urls_*.txt
+
+# Nix
+result
+.direnv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+*.temp
+
+# GIS datasets (exclude from Nix store)
+*.tif
+*.tif.aux.xml
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.qix
+*.geojson
+*.gml
+*.kml
+*.sld
