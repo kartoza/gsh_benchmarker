@@ -152,9 +152,17 @@ class ReportGenerator:
                 with open(json_file) as f:
                     data = json.load(f)
                 
+                # Skip consolidated result files (they have a different structure)
+                if "test_suite" in data or "results" in data and isinstance(data["results"], list):
+                    continue
+                
                 target = data.get("target", data.get("layer", "Unknown"))
                 concurrency = data.get("concurrency_level", 0)
                 results = data.get("results", {})
+                
+                # Ensure results is a dict, not a list
+                if not isinstance(results, dict):
+                    continue
                 
                 rps = results.get("requests_per_second", "0")
                 avg_time = results.get("mean_response_time_ms", "0")
@@ -170,7 +178,7 @@ class ReportGenerator:
                     str(success_rate),
                 )
                 
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError, AttributeError):
                 continue
         
         return table
