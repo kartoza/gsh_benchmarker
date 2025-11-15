@@ -1,54 +1,88 @@
 # 🌍 GeoServer Load Testing Suite
 
-A comprehensive development environment and testing suite for **Climate Adaptation Services** GeoServer performance analysis, featuring beautiful TUI interfaces, automated load testing capabilities, and WMTS tile optimization for peak loads of 5000+ concurrent requests.
+A comprehensive Python-based load testing framework for GeoServer WMTS tiles with rich UI components and detailed reporting capabilities.
 
 ## 🚀 Quick Start
 
-1. **Enter the environment** (automatic with direnv):
-   ```bash
-   cd ClimateAdaptationSolutions  # Environment loads automatically
-   # Or manually: nix develop
-   ```
+### Running Tests
 
-2. **Set up credentials**:
-   ```bash
-   cp credentials.json.example credentials.json
-   # Edit credentials.json with your GeoServer admin credentials
-   ```
+Run the comprehensive test suite with beautiful progress reporting:
 
-3. **Configure GeoWebCache (optional but recommended)**:
-   ```bash
-   python3 geoserver_config.py
-   ```
+```bash
+./test
+```
 
-4. **Launch the interactive menu**:
-   ```bash
-   ./geoserver_menu.sh
-   ```
+Or directly with Python:
+```bash
+python3 run_tests.py
+```
+
+The test runner provides:
+- 🎨 Rich terminal UI with Kartoza colors
+- ⚡ Real-time progress tracking
+- 📊 Detailed test results with module breakdown
+- 🔍 Coverage analysis (if coverage.py is available)
+- ✅ Pass/fail indicators for each test
+- 🌳 Tree view of test hierarchy
+
+### Interactive Menu (Recommended)
+
+```bash
+python3 geotest.py
+```
+
+### Command Line Usage
+
+Test connectivity to all layers:
+```bash
+python3 geotest.py --connectivity
+```
+
+Run a single layer test:
+```bash
+python3 geotest.py --single AfstandTotKoelte --requests 1000
+```
+
+Run comprehensive tests across all layers:
+```bash
+python3 geotest.py --comprehensive --requests 5000
+```
+
+### Legacy Shell Scripts (Deprecated)
+
+The old shell scripts are deprecated. Use the Python tool instead:
+
+```bash
+# Old way (deprecated):
+./geoserver_menu.sh
+
+# New way:
+python3 geotest.py
+```
 
 ## 🎯 Features
 
-### 🎨 Beautiful TUI Interface
-- **gum-powered menus** - Elegant terminal UI for test selection and configuration
-- **chafa map previews** - View WMS layer maps directly in terminal (600x400px)
-- **rich Python interface** - Stunning progress bars, tables, and status panels
-- **Real-time progress** - Live feedback during load tests with spinners and bars
-- **Results visualization** - Pretty-printed CSV performance metrics
+### 🎨 Rich Python Interface
+- **Interactive Menu System** - Beautiful command-line interface with progress bars
+- **Real-time Progress** - Live feedback during load tests with Rich UI components
+- **Results Visualization** - Comprehensive tables and summaries
+- **Color-coded Output** - Kartoza-themed color scheme throughout
+- **Map Previews** - Download and optionally display map images (with chafa)
 
-### ⚡ Load Testing Capabilities
+### ⚡ Load Testing Capabilities  
+- **Apache Bench Integration** - Industry-standard HTTP benchmarking
 - **WMTS Tile Testing** - High-performance WebMercatorQuad (EPSG:3857) tile requests
-- **5000+ Concurrent Requests** - Stress testing with configurable parameters (default: 5000 requests, 100 concurrent)
-- **Multiple Layer Support** - Test all 4 Climate Adaptation layers individually or in sequence
+- **Configurable Parameters** - Custom request counts and concurrency levels
+- **Multiple Test Modes** - Single layer, comprehensive, and connectivity testing
+- **Results Management** - Automatic results clearing and storage
 - **Detailed Metrics** - CSV/JSON exports with timing data, RPS, percentiles
-- **Warm-up Testing** - Automatic connectivity and warm-up tests before main load
-- **Apache Bench Integration** - Industry-standard HTTP benchmarking with custom headers
 
-### 🔧 GeoServer Integration
-- **REST API Client** - Complete GeoWebCache configuration via Python rich interface
-- **Automatic Optimization** - EPSG:3857 (WebMercatorQuad) tile matrix setup
-- **Tile Seeding** - Pre-generate tiles (zoom 0-8) for Netherlands bbox for better performance
-- **Layer Discovery** - Automatic detection and validation of published layers
-- **Connectivity Testing** - Verify all WMTS endpoints before testing
+### 🔧 Python Architecture
+- **Modular Design** - Clean separation of core, UI, and configuration
+- **Type Hints** - Full type annotations for better code quality
+- **Rich Progress Tracking** - Real-time task management with visual feedback
+- **Error Handling** - Comprehensive error handling with user-friendly messages
+- **Extensible Configuration** - Easy to adapt for other GeoServer instances
 
 ## 📊 Target Layers
 

@@ -36,3 +36,10 @@ __pycache__/
 *.kml
 *.sld
 reports
+
+# Data directory
+data/
+
+# GeoServer history
+geoserver_history.json
+.claude
