@@ -363,10 +363,23 @@ def show_results():
         )
 
 
-def parse_concurrency_levels(concurrency_str: str) -> List[int]:
-    """Parse comma-separated concurrency levels"""
+def parse_concurrency_levels(concurrency_str: str, max_requests: int = None) -> List[int]:
+    """Parse comma-separated concurrency levels and trim based on request count"""
     try:
-        return [int(x.strip()) for x in concurrency_str.split(",")]
+        concurrency_levels = [int(x.strip()) for x in concurrency_str.split(",")]
+        
+        # Trim concurrency levels that exceed request count (Apache Bench requirement)
+        if max_requests:
+            original_count = len(concurrency_levels)
+            concurrency_levels = [c for c in concurrency_levels if c <= max_requests]
+            
+            if len(concurrency_levels) < original_count:
+                removed_count = original_count - len(concurrency_levels)
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]📝 Trimmed {removed_count} concurrency levels that exceed request count ({max_requests})[/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Concurrency cannot exceed total requests (Apache Bench limitation)[/]")
+        
+        return concurrency_levels if concurrency_levels else [min(100, max_requests or 100)]
+        
     except ValueError as e:
         console.print(
             f"[{KARTOZA_COLORS['alert']}]❌ Invalid concurrency format: {e}[/]"
@@ -438,8 +451,8 @@ Examples:
 
     args = parser.parse_args()
 
-    # Parse concurrency levels
-    concurrency_levels = parse_concurrency_levels(args.concurrency)
+    # Parse concurrency levels with request count validation
+    concurrency_levels = parse_concurrency_levels(args.concurrency, args.requests)
 
     # Handle commands
     if args.connectivity:

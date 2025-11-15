@@ -26,7 +26,6 @@ from rich.table import Table
 from rich.text import Text
 
 from .config import (
-    NETHERLANDS_BBOX,
     TILE_MATRIX_SET,
     TILE_FORMAT,
     DEFAULT_ZOOM_LEVEL,
@@ -145,24 +144,31 @@ class GeoServerTester(BaseBenchmarker):
         )
 
     def generate_wms_url(
-        self, layer_name: str, width: int = 600, height: int = 400
+        self, layer_name: str, width: int = 600, height: int = 400, crs: str = "EPSG:4326"
     ) -> str:
         """Generate WMS URL for map preview"""
         if not self.wms_base:
             raise ValueError("Server URL not configured. Call set_server_url() first.")
 
-        # Use layer's bbox if available, otherwise default to Netherlands
+        # Use layer's bbox if available from capabilities
         layer_info = self.get_layer_info(layer_name)
         if layer_info and layer_info.bbox:
             bbox = layer_info.bbox
             bbox_str = f"{bbox['minx']},{bbox['miny']},{bbox['maxx']},{bbox['maxy']}"
         else:
-            bbox_str = ",".join(map(str, NETHERLANDS_BBOX))
+            # If no layer bbox available, request full world extent 
+            # This will be transformed by the server to the layer's actual extent
+            from .config import WORLD_BBOX_4326, WORLD_BBOX_3857
+            if crs == "EPSG:4326" or crs == "CRS:84":
+                bbox_str = ",".join(map(str, WORLD_BBOX_4326))
+            else:
+                # For other CRS, use Web Mercator world extent as default
+                bbox_str = ",".join(map(str, WORLD_BBOX_3857))
 
         return (
             f"{self.wms_base}?"
             f"SERVICE=WMS&VERSION=1.1.0&REQUEST=GetMap&"
-            f"LAYERS={layer_name}&STYLES=&SRS=EPSG:3857&"
+            f"LAYERS={layer_name}&STYLES=&SRS={crs}&"
             f"BBOX={bbox_str}&WIDTH={width}&HEIGHT={height}&"
             f"FORMAT={TILE_FORMAT}"
         )
@@ -206,24 +212,61 @@ class GeoServerTester(BaseBenchmarker):
         return results
 
     def download_map_preview(self, layer_name: str) -> Optional[Path]:
-        """Download a WMS map preview for a layer"""
-        try:
-            wms_url = self.generate_wms_url(layer_name)
-            preview_path = self.temp_dir / f"{layer_name.replace(':', '_')}_preview.png"
+        """Download a WMS map preview for a layer with fallback CRS options"""
+        preview_path = self.temp_dir / f"{layer_name.replace(':', '_')}_preview.png"
+        
+        # Get layer info to see what CRS are supported
+        layer_info = self.get_layer_info(layer_name)
+        
+        # Build list of CRS to try - prioritize layer's supported CRS if available
+        crs_options = []
+        if layer_info and hasattr(layer_info, 'srs_list') and layer_info.srs_list:
+            # Use CRS from layer capabilities
+            crs_options.extend(layer_info.srs_list)
+        
+        # Add common fallback CRS options if not already included
+        common_crs = ["EPSG:4326", "EPSG:3857", "CRS:84"]
+        for crs in common_crs:
+            if crs not in crs_options:
+                crs_options.append(crs)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        crs_options = [x for x in crs_options if not (x in seen or seen.add(x))]
+        
+        for crs in crs_options:
+            try:
+                wms_url = self.generate_wms_url(layer_name, crs=crs)
+                console.print(f"[dim]Trying {crs} for {layer_name}...[/dim]")
+                
+                response = requests.get(wms_url, timeout=REQUEST_TIMEOUT)
+                response.raise_for_status()
+                
+                # Check if response is an image (not an error message)
+                content_type = response.headers.get('content-type', '').lower()
+                if 'image' not in content_type and 'png' not in content_type:
+                    console.print(f"[dim]Non-image response with {crs}: {content_type}[/dim]")
+                    continue
+                
+                # Check if the image is not just a blank/very small image
+                if len(response.content) < 1000:  # Very small images are likely blank
+                    console.print(f"[dim]Small/blank image with {crs} ({len(response.content)} bytes), trying next CRS...[/dim]")
+                    continue
 
-            response = requests.get(wms_url, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
+                with open(preview_path, "wb") as f:
+                    f.write(response.content)
 
-            with open(preview_path, "wb") as f:
-                f.write(response.content)
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Downloaded preview with {crs}: {preview_path}[/]")
+                return preview_path
 
-            return preview_path
-
-        except (requests.RequestException, ValueError) as e:
-            console.print(
-                f"[{KARTOZA_COLORS['alert']}]❌ Failed to download preview for {layer_name}: {e}[/]"
-            )
-            return None
+            except (requests.RequestException, ValueError) as e:
+                console.print(f"[dim]Failed with {crs}: {e}[/dim]")
+                continue
+        
+        console.print(
+            f"[{KARTOZA_COLORS['alert']}]❌ Failed to download preview for {layer_name} with all available CRS options[/]"
+        )
+        return None
 
     def run_single_test(
         self,
@@ -324,6 +367,20 @@ class GeoServerTester(BaseBenchmarker):
 
         if concurrency_levels is None:
             concurrency_levels = CONCURRENCY_LEVELS
+
+        # Trim concurrency levels that exceed request count (Apache Bench requirement)
+        original_count = len(concurrency_levels)
+        concurrency_levels = [c for c in concurrency_levels if c <= total_requests]
+        
+        if len(concurrency_levels) < original_count:
+            removed_count = original_count - len(concurrency_levels)
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]📝 Trimmed {removed_count} concurrency levels that exceed request count ({total_requests})[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Concurrency cannot exceed total requests (Apache Bench limitation)[/]")
+            
+        # Ensure we have at least one valid concurrency level
+        if not concurrency_levels:
+            concurrency_levels = [min(100, total_requests)]
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Using concurrency level: {concurrency_levels[0]}[/]")
 
         # Clear previous results
         self.clear_results()

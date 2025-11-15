@@ -54,6 +54,15 @@ from .image_utils import (
     create_simple_chart_ascii
 )
 
+# Import PDF generator with optional dependency handling
+try:
+    from .pdf_generator import generate_pdf_report, PDFReportGenerator
+    PDF_GENERATOR_AVAILABLE = True
+except ImportError:
+    PDF_GENERATOR_AVAILABLE = False
+    generate_pdf_report = None
+    PDFReportGenerator = None
+
 __all__ = [
     # Colors
     "KARTOZA_COLORS",
@@ -103,5 +112,10 @@ __all__ = [
     # Image utilities
     "TerminalImageRenderer",
     "download_preview_image",
-    "create_simple_chart_ascii"
+    "create_simple_chart_ascii",
+    
+    # PDF utilities (conditionally available)
+    "generate_pdf_report",
+    "PDFReportGenerator", 
+    "PDF_GENERATOR_AVAILABLE"
 ]

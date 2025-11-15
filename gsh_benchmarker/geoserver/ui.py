@@ -205,18 +205,18 @@ class MenuInterface:
         
         layer_choices.append("🔙 Back to main menu")
         
-        # Display choices with numbers
+        # Display choices with numbers starting from 1
         for i, choice_text in enumerate(layer_choices):
-            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i}[/] - {choice_text}")
+            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {choice_text}")
         console.print()
         
         choice = Prompt.ask(
             "Select a layer to preview",
-            choices=[str(i) for i in range(len(layer_choices))],
+            choices=[str(i+1) for i in range(len(layer_choices))],
             show_choices=False
         )
         
-        choice_idx = int(choice)
+        choice_idx = int(choice) - 1
         
         if choice_idx < len(layer_choices) - 1:  # Not "Back"
             layer_name = layer_names[choice_idx]
@@ -286,16 +286,16 @@ class MenuInterface:
         console.print("Available layers:")
         for i, layer_name in enumerate(layer_names):
             layer_info = self.tester.layers[layer_name]
-            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i}[/] - {layer_info.title}")
+            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {layer_info.title}")
         
         console.print()
         choice = IntPrompt.ask(
             "Select layer",
-            choices=[str(i) for i in range(len(layer_names))],
+            choices=[str(i+1) for i in range(len(layer_names))],
             show_choices=False
         )
         
-        layer_name = layer_names[choice]
+        layer_name = layer_names[choice-1]
         layer_info = self.tester.layers[layer_name]
         
         console.print(f"[{KARTOZA_COLORS['highlight1']}]Selected: {layer_info.title}[/]")
@@ -432,9 +432,10 @@ class MenuInterface:
         # Group results by layer
         layer_stats = {}
         for result in results:
-            if result.layer not in layer_stats:
-                layer_stats[result.layer] = []
-            layer_stats[result.layer].append(result)
+            layer_name = getattr(result, 'layer', getattr(result, 'target', 'unknown'))
+            if layer_name not in layer_stats:
+                layer_stats[layer_name] = []
+            layer_stats[layer_name].append(result)
         
         for layer_name, layer_results in layer_stats.items():
             layer_info = self.tester.get_layer_info(layer_name)
@@ -459,25 +460,33 @@ class MenuInterface:
         console.print(table)
     
     def _generate_pdf_report(self):
-        """Generate PDF report using common report utilities"""
+        """Generate PDF report using common PDF generator"""
         try:
-            # Try to execute external report generator if it exists
-            success, error_msg = execute_external_report_generator("benchmark_report_generator.py")
+            # Import the PDF generator
+            from ..common.pdf_generator import generate_pdf_report
             
-            if success:
-                # Find the latest PDF report
-                latest_pdf = find_latest_report_file(Path("reports"), "*.pdf")
-                if latest_pdf:
-                    console.print(f"[{KARTOZA_COLORS['highlight3']}]📄 Report: {latest_pdf}[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generating comprehensive PDF report...[/]")
+            
+            # Generate PDF report
+            pdf_path = generate_pdf_report("geoserver")
+            
+            if pdf_path:
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ PDF report generated![/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]📄 Report: {pdf_path}[/]")
             else:
                 console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to generate PDF report[/]")
-                if error_msg:
-                    console.print(f"[{KARTOZA_COLORS['alert']}]Error: {error_msg}[/]")
                 
                 # Offer to generate text report as fallback
                 if Confirm.ask(f"[{KARTOZA_COLORS['highlight3']}]Generate text report instead?[/]"):
                     self._generate_text_report()
                     
+        except ImportError:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ PDF generation requires matplotlib[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Install with: pip install matplotlib[/]")
+            
+            # Offer to generate text report as fallback
+            if Confirm.ask(f"[{KARTOZA_COLORS['highlight3']}]Generate text report instead?[/]"):
+                self._generate_text_report()
         except Exception as e:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ Error generating report: {e}[/]")
     
@@ -540,19 +549,19 @@ class MenuInterface:
             console.print()
             
             for i, (option_text, _) in enumerate(menu_options):
-                console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i}[/] - {option_text}")
+                console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {option_text}")
             
             console.print()
             
             try:
                 choice = IntPrompt.ask(
                     "Select an option",
-                    choices=[str(i) for i in range(len(menu_options))],
+                    choices=[str(i+1) for i in range(len(menu_options))],
                     show_choices=False
                 )
                 
                 console.print()
-                _, handler = menu_options[choice]
+                _, handler = menu_options[choice-1]
                 handler()
                 
             except (KeyboardInterrupt, EOFError):

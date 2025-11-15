@@ -27,11 +27,9 @@ DEFAULT_ZOOM_LEVEL = 8
 DEFAULT_TILE_ROW = 84
 DEFAULT_TILE_COL = 133
 
-# Netherlands bounding box (EPSG:3857 - Web Mercator)
-NETHERLANDS_BBOX = [360584.6875, 6618208.5, 839275.4375, 7108899.5]
-
-# Netherlands bounding box (EPSG:4326 - WGS84)  
-NETHERLANDS_BBOX_4326 = [3.0501, 50.7286, 7.3450, 53.7185]
+# Generic world bounding boxes for fallback when layer bbox is not available
+WORLD_BBOX_4326 = [-180, -90, 180, 90]  # Full world in WGS84
+WORLD_BBOX_3857 = [-20037508, -20037508, 20037508, 20037508]  # Web Mercator world extent
 
 # GeoServer-specific Apache Bench configuration
 AB_ACCEPT_HEADER = "image/png,*/*"
