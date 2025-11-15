@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-from geoserver_tests.image_renderer import TerminalImageRenderer
+from gsh_benchmarker.geoserver.image_renderer import TerminalImageRenderer
 
 
 class TestImageRenderer(unittest.TestCase):

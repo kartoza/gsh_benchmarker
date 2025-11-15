@@ -177,8 +177,11 @@ def get_server_url_interactive(server_type: str = "server", history_manager: Opt
     
     # Get user choice
     console.print(f"\n[{KARTOZA_COLORS['highlight1']}]Options:[/]")
-    console.print(f"  • Enter a number (1-{len(recent_servers)}) to use a recent server")
-    console.print(f"  • Enter a new {server_type} URL")
+    if recent_servers:
+        console.print(f"  • Enter a number (1-{len(recent_servers)}) to use a recent server")
+    else:
+        console.print(f"  • No recent {server_type} servers found")
+    console.print(f"  • Enter a new {server_type} URL (e.g., http://your-server.com:8080/geoserver)")
     console.print(f"  • Press Enter to cancel")
     
     choice = Prompt.ask(f"\n[{KARTOZA_COLORS['highlight2']}]Your choice[/]").strip()

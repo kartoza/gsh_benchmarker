@@ -18,8 +18,8 @@ class TestOriginalErrorScenario(unittest.TestCase):
         
         try:
             # Import the modules
-            from geoserver_tests.core import GeoServerTester
-            from geoserver_tests.capabilities import LayerInfo
+            from gsh_benchmarker.geoserver.core import GeoServerTester
+            from gsh_benchmarker.geoserver.capabilities import LayerInfo
             
             # Create tester instance
             tester = GeoServerTester()
@@ -40,7 +40,7 @@ class TestOriginalErrorScenario(unittest.TestCase):
             print("✅ Setup complete - no NameError")
             
             # Mock subprocess to avoid actual Apache Bench call
-            with patch('geoserver_tests.core.subprocess.run') as mock_subprocess, \
+            with patch('gsh_benchmarker.geoserver.core.subprocess.run') as mock_subprocess, \
                  patch('builtins.open'), \
                  patch('pathlib.Path.mkdir'):
                 

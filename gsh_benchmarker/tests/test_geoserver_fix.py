@@ -7,8 +7,9 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 from datetime import datetime
 
-from geoserver_tests.core import GeoServerTester, TestResult
-from geoserver_tests.capabilities import LayerInfo
+from gsh_benchmarker.geoserver.core import GeoServerTester
+from gsh_benchmarker.common import BenchmarkResult
+from gsh_benchmarker.geoserver.capabilities import LayerInfo
 
 
 class TestGeoServerFix(unittest.TestCase):
@@ -45,9 +46,9 @@ class TestGeoServerFix(unittest.TestCase):
     def test_imports_work(self):
         """Test that all modules can be imported without NameError"""
         try:
-            from geoserver_tests.core import GeoServerTester
-            from geoserver_tests.ui import MenuInterface
-            from geoserver_tests.capabilities import LayerInfo
+            from gsh_benchmarker.geoserver.core import GeoServerTester
+            from gsh_benchmarker.geoserver.ui import MenuInterface
+            from gsh_benchmarker.geoserver.capabilities import LayerInfo
         except NameError as e:
             self.fail(f"NameError during imports: {e}")
 
@@ -59,7 +60,7 @@ class TestGeoServerFix(unittest.TestCase):
         except NameError as e:
             self.fail(f"NameError during instantiation: {e}")
 
-    @patch('geoserver_tests.core.subprocess.run')
+    @patch('gsh_benchmarker.geoserver.core.subprocess.run')
     def test_run_single_test_uses_self_layers(self, mock_subprocess):
         """Test that run_single_test uses self.layers instead of undefined LAYERS"""
         # Mock subprocess.run to simulate successful Apache Bench
@@ -85,8 +86,8 @@ class TestGeoServerFix(unittest.TestCase):
             )
             
             # Verify test result was created successfully
-            self.assertIsInstance(result, TestResult)
-            self.assertEqual(result.layer, "test_layer")
+            self.assertIsInstance(result, BenchmarkResult)
+            self.assertEqual(result.target, "test_layer")
             self.assertEqual(result.concurrency, 10)
             self.assertEqual(result.total_requests, 100)
 
@@ -106,7 +107,7 @@ class TestGeoServerFix(unittest.TestCase):
         self.assertEqual(layer_info.title, "Test Layer")
         self.assertEqual(layer_info.name, "test_layer")
 
-    @patch('geoserver_tests.core.subprocess.run')
+    @patch('gsh_benchmarker.geoserver.core.subprocess.run')
     def test_comprehensive_test_uses_self_layers(self, mock_subprocess):
         """Test that run_comprehensive_test uses self.layers instead of undefined LAYERS"""
         # Mock subprocess.run to simulate successful Apache Bench
@@ -136,16 +137,17 @@ class TestGeoServerFix(unittest.TestCase):
             # Should have 4 results (2 layers × 2 concurrency levels)
             self.assertEqual(len(results), 4)
             
-            # Verify all results are TestResult objects
+            # Verify all results are BenchmarkResult objects
             for result in results:
-                self.assertIsInstance(result, TestResult)
+                self.assertIsInstance(result, BenchmarkResult)
 
     @patch('builtins.open', unittest.mock.mock_open())
     def test_save_test_metadata_uses_layer_info_object(self):
         """Test that _save_test_metadata correctly accesses LayerInfo object attributes"""
         # Create a test result
-        result = TestResult(
-            layer="test_layer",
+        result = BenchmarkResult(
+            target="test_layer",
+            service_type="geoserver",
             concurrency=10,
             total_requests=100,
             requests_per_second=50.0,
@@ -173,8 +175,9 @@ class TestGeoServerFix(unittest.TestCase):
         """Test that get_results_summary uses self.layers correctly"""
         # Mock JSON files in results directory
         mock_json_data = {
-            "layer": "test_layer",
-            "concurrency_level": 10,
+            "target": "test_layer",
+            "service_type": "geoserver",
+            "concurrency": 10,
             "results": {
                 "requests_per_second": "50.25",
                 "mean_response_time_ms": "20.00",
@@ -186,6 +189,7 @@ class TestGeoServerFix(unittest.TestCase):
         with patch.object(Path, 'exists', return_value=True), \
              patch.object(Path, 'glob', return_value=[Path('test_result.json')]), \
              patch.object(Path, 'stat') as mock_stat, \
+             patch.object(Path, 'mkdir'), \
              patch('builtins.open', unittest.mock.mock_open(read_data='')) as mock_open, \
              patch('json.load', return_value=mock_json_data):
             
