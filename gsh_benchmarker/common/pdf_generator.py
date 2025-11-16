@@ -795,6 +795,20 @@ class ReportLabPDFGenerator:
         
         progress.update(task, advance=10, description="Building report header...")
         
+        # Add Kartoza logo at the top
+        try:
+            logo_path = Path(__file__).parent.parent / "resources" / "KartozaLogoVerticalCMYK-small.png"
+            if logo_path.exists():
+                # Scale logo appropriately for PDF
+                logo_img = Image(str(logo_path))
+                logo_img.drawHeight = 2*cm  # Set height to 2cm
+                logo_img.drawWidth = 4*cm   # Maintain aspect ratio
+                logo_img.hAlign = 'CENTER'
+                story.append(logo_img)
+                story.append(Spacer(1, 0.5*cm))  # Add space after logo
+        except Exception as e:
+            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Could not add logo to PDF: {e}[/]")
+        
         # Report header
         story.append(Paragraph("GeoServer Comprehensive Benchmark Report", title_style))
         story.append(Paragraph("Dynamic Performance Analysis", styles['Normal']))

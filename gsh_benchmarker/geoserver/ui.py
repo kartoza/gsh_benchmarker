@@ -4,6 +4,7 @@ Rich-based user interface for GeoServer load testing
 
 import sys
 import subprocess
+import glob
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -16,7 +17,7 @@ from rich.columns import Columns
 from rich.align import Align
 from rich.layout import Layout
 from rich.live import Live
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, MofNCompleteColumn
 
 from .core import GeoServerTester
 from .config import (
@@ -45,7 +46,10 @@ class MenuInterface:
         self.image_renderer = TerminalImageRenderer()
     
     def show_banner(self):
-        """Display the main banner"""
+        """Display the main banner with Kartoza logo"""
+        # Display Kartoza logo using chafa if available
+        self._show_logo()
+        
         banner_text = Text()
         banner_text.append("🌍 GeoServer Load Testing Suite", style=f"bold {KARTOZA_COLORS['highlight2']}")
         banner_text.append("\n\n")
@@ -61,6 +65,50 @@ class MenuInterface:
         
         console.print(panel)
         console.print()
+    
+    def _show_logo(self):
+        """Display Kartoza logo using chafa if available"""
+        try:
+            logo_path = Path(__file__).parent.parent / "resources" / "KartozaLogoVerticalCMYK-small.png"
+            if not logo_path.exists():
+                return
+            
+            # Try to use chafa to render the logo in the terminal
+            try:
+                result = subprocess.run([
+                    "chafa", 
+                    str(logo_path),
+                    "--size", "60x15",  # Reasonable size for terminal
+                    "--format", "symbols"
+                ], 
+                capture_output=True, text=True, timeout=5, check=False)
+                
+                if result.returncode == 0 and result.stdout:
+                    # Center the logo output
+                    logo_lines = result.stdout.strip().split('\n')
+                    for line in logo_lines:
+                        console.print(Align.center(line))
+                    console.print()  # Add space after logo
+                    return
+                    
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                # Chafa not available or timeout, try image renderer fallback
+                pass
+            
+            # Fallback: Try using the existing image renderer
+            success = self.image_renderer.render_image(logo_path, max_width=60, max_height=15)
+            if success:
+                console.print()  # Add space after logo
+                return
+                
+            # If all else fails, show a text representation
+            console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]🏢 KARTOZA[/]"))
+            console.print(Align.center(f"[{KARTOZA_COLORS['highlight3']}]OPEN SOURCE GEOSPATIAL SOLUTIONS[/]"))
+            console.print()
+            
+        except Exception as e:
+            # Silent fallback - don't show errors for logo rendering
+            pass
     
     def setup_server(self):
         """Setup server connection and discover layers"""
@@ -503,6 +551,198 @@ class MenuInterface:
         except Exception as e:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ Error generating text report: {e}[/]")
     
+    def generate_report_from_latest_menu(self):
+        """Generate PDF report from latest benchmark results"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generate Report from Latest Results[/]")
+        console.print()
+        
+        try:
+            from ..common.pdf_generator import generate_pdf_report
+            
+            # Create a detailed progress bar for PDF generation
+            with Progress(
+                SpinnerColumn(),
+                BarColumn(),
+                MofNCompleteColumn(),
+                TimeElapsedColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+                transient=True
+            ) as progress:
+                
+                # Add main task
+                task = progress.add_task("Generating PDF Report", total=100)
+                
+                # Step 1: Find latest results
+                progress.update(task, completed=10, description="🔍 Looking for latest benchmark results...")
+                
+                # Step 2: Initialize PDF generator (simulated steps for better UX)
+                progress.update(task, completed=20, description="📋 Initializing PDF generator...")
+                
+                # Step 3: Generate the actual PDF
+                progress.update(task, completed=30, description="📄 Generating comprehensive PDF report...")
+                pdf_path = generate_pdf_report("geoserver")
+                
+                # Step 4: Finalize
+                progress.update(task, completed=100, description="✅ PDF generation complete!")
+            
+            console.print()
+            if pdf_path:
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ PDF report generated successfully![/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]📄 Report: {pdf_path}[/]")
+                
+                # Ask user if they want to open the PDF
+                if Confirm.ask(f"[{KARTOZA_COLORS['highlight2']}]Open PDF report now?[/]", default=True):
+                    try:
+                        subprocess.run(["xdg-open", str(pdf_path)], check=False)
+                        console.print(f"[{KARTOZA_COLORS['highlight4']}]📖 Opening PDF in default viewer...[/]")
+                    except Exception as e:
+                        console.print(f"[{KARTOZA_COLORS['alert']}]❌ Could not open PDF: {e}[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ No recent results found or failed to generate report[/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Run some benchmark tests first[/]")
+                
+        except ImportError:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ PDF generation requires additional dependencies[/]")
+        except Exception as e:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Error generating report: {e}[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def select_previous_report_menu(self):
+        """Select and generate PDF report from previous benchmark results"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]📋 Select Previous Benchmark Results[/]")
+        console.print()
+        
+        # Find all available result files
+        results_dir = Path("results")
+        if not results_dir.exists():
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No results directory found[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        pattern = str(results_dir / "consolidated_*_results_*.json")
+        result_files = sorted(glob.glob(pattern), reverse=True)
+        
+        if not result_files:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No previous benchmark results found[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Run some benchmark tests first[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        console.print(f"[{KARTOZA_COLORS['highlight3']}]Found {len(result_files)} previous benchmark results:[/]")
+        console.print()
+        
+        # Create selection table
+        table = Table(title="Available Benchmark Results", show_header=True)
+        table.add_column("#", justify="center", style=f"{KARTOZA_COLORS['highlight3']}")
+        table.add_column("Date/Time", style=f"{KARTOZA_COLORS['highlight1']}")
+        table.add_column("File", style=f"{KARTOZA_COLORS['highlight2']}")
+        
+        # Show top 10 most recent files
+        display_files = result_files[:10]
+        
+        for i, file_path in enumerate(display_files):
+            filename = Path(file_path).name
+            # Extract datetime from filename if possible
+            try:
+                # Example: consolidated_geoserver_results_20241116_093401.json
+                parts = filename.replace('consolidated_', '').replace('_results_', '_').replace('.json', '').split('_')
+                if len(parts) >= 3:
+                    date_str = parts[-2]  # 20241116
+                    time_str = parts[-1]  # 093401
+                    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+                else:
+                    formatted_date = "Unknown"
+            except:
+                formatted_date = "Unknown"
+            
+            table.add_row(str(i + 1), formatted_date, filename)
+        
+        if len(result_files) > 10:
+            table.add_row("...", f"({len(result_files) - 10} more files)", "...")
+        
+        console.print(table)
+        console.print()
+        
+        if len(display_files) == 0:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No results to display[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Get user selection
+        try:
+            choice = IntPrompt.ask(
+                f"Select result file to generate report from [1-{len(display_files)}]",
+                choices=[str(i) for i in range(1, len(display_files) + 1)],
+                show_choices=False
+            )
+            
+            selected_file = display_files[choice - 1]
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Selected: {Path(selected_file).name}[/]")
+            console.print()
+            
+            # Generate report from selected file with progress bar
+            try:
+                from ..common.pdf_generator import generate_pdf_report
+                
+                # Create a detailed progress bar for PDF generation
+                with Progress(
+                    SpinnerColumn(),
+                    BarColumn(),
+                    MofNCompleteColumn(),
+                    TimeElapsedColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                    transient=True
+                ) as progress:
+                    
+                    # Add main task
+                    task = progress.add_task("Generating PDF Report", total=100)
+                    
+                    # Step 1: Load selected results
+                    progress.update(task, completed=10, description=f"📂 Loading results from {Path(selected_file).name}...")
+                    
+                    # Step 2: Initialize PDF generator
+                    progress.update(task, completed=20, description="📋 Initializing PDF generator...")
+                    
+                    # Step 3: Generate the actual PDF
+                    progress.update(task, completed=30, description="📄 Generating comprehensive PDF report...")
+                    pdf_path = generate_pdf_report("geoserver", results_file=selected_file)
+                    
+                    # Step 4: Finalize
+                    progress.update(task, completed=100, description="✅ PDF generation complete!")
+                
+                console.print()
+                if pdf_path:
+                    console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ PDF report generated successfully![/]")
+                    console.print(f"[{KARTOZA_COLORS['highlight3']}]📄 Report: {pdf_path}[/]")
+                    
+                    # Ask user if they want to open the PDF
+                    if Confirm.ask(f"[{KARTOZA_COLORS['highlight2']}]Open PDF report now?[/]", default=True):
+                        try:
+                            subprocess.run(["xdg-open", str(pdf_path)], check=False)
+                            console.print(f"[{KARTOZA_COLORS['highlight4']}]📖 Opening PDF in default viewer...[/]")
+                        except Exception as e:
+                            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Could not open PDF: {e}[/]")
+                else:
+                    console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to generate report[/]")
+                    
+            except ImportError:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ PDF generation requires additional dependencies[/]")
+            except Exception as e:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Error generating report: {e}[/]")
+                
+        except (ValueError, KeyboardInterrupt):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]❌ Selection cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
     def view_results_menu(self):
         """Menu for viewing test results"""
         console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 View Test Results[/]")
@@ -526,6 +766,8 @@ class MenuInterface:
             if not self.server_configured:
                 menu_options = [
                     ("🔧 Setup Server Connection", self.setup_server),
+                    ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
+                    ("📋 Select Previous Results for Report", self.select_previous_report_menu),
                     ("📖 Help & Info", self._show_help),
                     ("❌ Exit", self.exit_app)
                 ]
@@ -536,6 +778,8 @@ class MenuInterface:
                     ("⚡ Run Single Layer Test", self.single_test_menu), 
                     ("🔥 Run Comprehensive Tests", self.comprehensive_test_menu),
                     ("📊 View Test Results", self.view_results_menu),
+                    ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
+                    ("📋 Select Previous Results for Report", self.select_previous_report_menu),
                     ("🔍 Test Connectivity", self.test_connectivity_menu),
                     ("🗺️  Show Layer Info", self.show_layer_info),
                     ("🎨 Image Rendering Info", self.show_image_capabilities),

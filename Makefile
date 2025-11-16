@@ -1,14 +1,16 @@
-.PHONY: test benchmark help clean
+.PHONY: test benchmark help clean report select-report
 
 # Default target
 help:
 	@echo "🌍 GeospatialHosting Benchmarking Environment"
 	@echo "================================================"
 	@echo "Available targets:"
-	@echo "  test       - Run the test suite using Python unittest"
-	@echo "  benchmark  - Run GeoServer benchmarks"
-	@echo "  clean      - Clean up temporary files and results"
-	@echo "  help       - Show this help message"
+	@echo "  test          - Run the test suite using Python unittest"
+	@echo "  benchmark     - Run GeoServer benchmarks"
+	@echo "  report        - Generate PDF report from latest results"
+	@echo "  select-report - Interactively select and generate report from previous runs"
+	@echo "  clean         - Clean up temporary files and results"
+	@echo "  help          - Show this help message"
 
 # Run tests using Python unittest discovery
 test:
@@ -25,6 +27,18 @@ benchmark:
 		exit 1; \
 	fi
 	@python -m gsh_benchmarker.geoserver.gsh_benchmarker $(ARGS)
+
+# Generate PDF report from latest results
+report:
+	@echo "📊 Generating PDF Report from Latest Results"
+	@echo "============================================"
+	@python -m gsh_benchmarker.cli --generate-report
+
+# Interactively select and generate report from previous runs
+select-report:
+	@echo "📋 Select Previous Benchmark Results for Report"
+	@echo "==============================================="
+	@python -m gsh_benchmarker.cli --select-report
 
 # Clean up results and temporary files
 clean:

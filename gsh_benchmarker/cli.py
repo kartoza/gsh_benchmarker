@@ -95,8 +95,11 @@ def show_help():
     help_text.append("    --comprehensive --url https://example.com/geoserver \\\n", style=f"{KARTOZA_COLORS['highlight4']}")
     help_text.append("    -t 5000 -c 1,10,100,500,1000\n", style=f"{KARTOZA_COLORS['highlight4']}")
     help_text.append("\n")
-    help_text.append("  # Generate PDF report from results\n", style=f"{KARTOZA_COLORS['highlight4']}")
+    help_text.append("  # Generate PDF report from latest results\n", style=f"{KARTOZA_COLORS['highlight4']}")
     help_text.append("  python3 -m gsh_benchmarker.cli --generate-report\n", style=f"{KARTOZA_COLORS['highlight4']}")
+    help_text.append("\n")
+    help_text.append("  # Select and generate PDF report from previous runs\n", style=f"{KARTOZA_COLORS['highlight4']}")
+    help_text.append("  python3 -m gsh_benchmarker.cli --select-report\n", style=f"{KARTOZA_COLORS['highlight4']}")
     
     panel = Panel.fit(
         help_text,
@@ -263,13 +266,114 @@ def run_comprehensive_test(service_type: str, url: str, requests: int, concurren
         console.print(f"[{KARTOZA_COLORS['alert']}]❌ Comprehensive testing failed[/]")
         return False
 
-def generate_report():
+def generate_report(interactive=False):
     """Generate PDF report from existing results"""
-    from .common.pdf_generator import generate_pdf_report
+    from .common.pdf_generator import generate_pdf_report, ReportLabPDFGenerator
+    from pathlib import Path
+    import json
+    import glob
     
     console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generating PDF report from existing results...[/]")
     
-    pdf_path = generate_pdf_report("geoserver", use_reportlab=True)
+    if interactive:
+        # Show menu of available result files
+        results_dir = Path("results")
+        if not results_dir.exists():
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No results directory found[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Run some tests first to generate results[/]")
+            return False
+        
+        # Find consolidated result files
+        pattern = str(results_dir / "consolidated_*_results_*.json")
+        result_files = sorted(glob.glob(pattern), reverse=True)
+        
+        if not result_files:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No consolidated result files found[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Run comprehensive tests first to generate consolidated results[/]")
+            return False
+        
+        console.print(f"[{KARTOZA_COLORS['highlight3']}]📋 Available benchmark results:[/]")
+        console.print()
+        
+        # Display available result files with details
+        from rich.table import Table
+        table = Table(title="Available Benchmark Results", show_header=True)
+        table.add_column("#", style=f"{KARTOZA_COLORS['highlight1']}", width=3)
+        table.add_column("Date", style=f"{KARTOZA_COLORS['highlight2']}")
+        table.add_column("Service", style=f"{KARTOZA_COLORS['highlight3']}")
+        table.add_column("Tests", style=f"{KARTOZA_COLORS['highlight4']}")
+        table.add_column("File", style=f"{KARTOZA_COLORS['highlight3']}")
+        
+        for i, file_path in enumerate(result_files[:10], 1):  # Show max 10 recent results
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                
+                test_suite = data.get('test_suite', {})
+                date_str = test_suite.get('date', 'Unknown')[:19].replace('T', ' ')
+                service_type = test_suite.get('service_type', 'Unknown')
+                total_tests = test_suite.get('total_tests', 0)
+                filename = Path(file_path).name
+                
+                table.add_row(
+                    str(i),
+                    date_str,
+                    service_type,
+                    str(total_tests),
+                    filename
+                )
+            except:
+                table.add_row(
+                    str(i),
+                    "Invalid",
+                    "Unknown",
+                    "0",
+                    Path(file_path).name
+                )
+        
+        console.print(table)
+        console.print()
+        
+        # Get user selection
+        try:
+            import sys
+            
+            # Check if we're in an interactive terminal
+            if not sys.stdin.isatty():
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Interactive mode requires a terminal (TTY)[/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Use --generate-report for non-interactive mode[/]")
+                return False
+                
+            choice = input(f"Select result file to generate report (1-{len(result_files[:10])}) or 'q' to quit: ").strip()
+            
+            if choice.lower() == 'q':
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]👋 Report generation cancelled[/]")
+                return False
+            
+            choice_num = int(choice)
+            if 1 <= choice_num <= min(len(result_files), 10):
+                selected_file = result_files[choice_num - 1]
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]📄 Selected: {Path(selected_file).name}[/]")
+                
+                # Generate PDF from specific file
+                generator = ReportLabPDFGenerator("geoserver")
+                pdf_path = generator.generate_comprehensive_report(
+                    results_pattern=Path(selected_file).name,
+                    output_filename=None
+                )
+            else:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Invalid selection[/]")
+                return False
+                
+        except ValueError:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Please enter a valid number[/]")
+            return False
+        except (KeyboardInterrupt, EOFError):
+            console.print(f"\n[{KARTOZA_COLORS['highlight3']}]👋 Report generation cancelled[/]")
+            return False
+    else:
+        # Use latest results (existing behavior)
+        pdf_path = generate_pdf_report("geoserver", use_reportlab=True)
     
     if pdf_path:
         console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ PDF report generated successfully![/]")
@@ -368,7 +472,12 @@ Examples:
     parser.add_argument(
         "--generate-report", "--report",
         action="store_true",
-        help="Generate PDF report from existing results"
+        help="Generate PDF report from latest results"
+    )
+    parser.add_argument(
+        "--select-report", "--select",
+        action="store_true",
+        help="Interactively select and generate PDF report from previous benchmark runs"
     )
     
     # If no arguments, show help
@@ -386,7 +495,10 @@ Examples:
         show_results()
         return
     elif args.generate_report:
-        generate_report()
+        generate_report(interactive=False)
+        return
+    elif args.select_report:
+        generate_report(interactive=True)
         return
     
     # Commands that require service type
@@ -403,7 +515,7 @@ Examples:
     elif args.comprehensive:
         run_comprehensive_test(args.service, args.url, args.requests, concurrency_levels)
     else:
-        console.print(f"[{KARTOZA_COLORS['highlight1']}]💡 Specify a command: --connectivity, --layer, --comprehensive, --results, or --generate-report[/]")
+        console.print(f"[{KARTOZA_COLORS['highlight1']}]💡 Specify a command: --connectivity, --layer, --comprehensive, --results, --generate-report, or --select-report[/]")
         show_help()
 
 if __name__ == "__main__":
