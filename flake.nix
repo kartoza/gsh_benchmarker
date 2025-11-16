@@ -28,6 +28,8 @@
             matplotlib
             seaborn
             reportlab
+            psutil
+            questionary
           ]
         );
 

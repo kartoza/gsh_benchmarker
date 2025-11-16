@@ -717,19 +717,25 @@ class ReportLabPDFGenerator:
             console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Could not create detailed histogram for {layer_name}: {e}[/]")
             return None
     
-    def generate_comprehensive_report(self, timestamp: str = None) -> Optional[Path]:
+    def generate_comprehensive_report(self, timestamp: str = None, results_pattern: str = None) -> Optional[Path]:
         """Generate comprehensive PDF report using ReportLab"""
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # Find consolidated results file
-        consolidated_files = list(RESULTS_DIR.glob(f"consolidated_*_results_*.json"))
+        if results_pattern:
+            # Use specific pattern provided (could be exact filename)
+            consolidated_files = list(RESULTS_DIR.glob(results_pattern))
+        else:
+            # Use default pattern for service type
+            consolidated_files = list(RESULTS_DIR.glob(f"consolidated_{self.service_type}_results_*.json"))
         
         if not consolidated_files:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No consolidated results found[/]")
+            pattern_info = results_pattern or f"consolidated_{self.service_type}_results_*.json"
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No consolidated results found matching: {pattern_info}[/]")
             return None
         
-        # Use most recent if specific timestamp not found
+        # Use most recent if multiple files found
         latest_file = max(consolidated_files, key=lambda p: p.stat().st_mtime)
         console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Using results: {latest_file}[/]")
         
@@ -1197,15 +1203,22 @@ class ReportLabPDFGenerator:
                 console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Could not parse test times for monitoring: {e}[/]")
                 return
             
-            # Try to connect to monitoring systems (use environment variables or defaults)
-            import os
-            prometheus_url = os.getenv('PROMETHEUS_URL', 'http://localhost:9090')
-            grafana_url = os.getenv('GRAFANA_URL', 'http://localhost:3000') 
-            grafana_api_key = os.getenv('GRAFANA_API_KEY')
+            # Try to connect to monitoring systems using GUI configuration
+            from .monitoring_config import MonitoringConfigManager
             
-            console.print(f"[{KARTOZA_COLORS['highlight3']}]🔍 Attempting to connect to monitoring systems...[/]")
-            console.print(f"[{KARTOZA_COLORS['highlight3']}]  Prometheus: {prometheus_url}[/]")
-            console.print(f"[{KARTOZA_COLORS['highlight3']}]  Grafana: {grafana_url}[/]")
+            monitoring_config = MonitoringConfigManager()
+            prometheus_url = monitoring_config.get_active_prometheus_url()
+            grafana_url, grafana_api_key = monitoring_config.get_active_grafana_config()
+            
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]🔍 Loading monitoring configuration...[/]")
+            if prometheus_url:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]  Prometheus: {prometheus_url}[/]")
+            if grafana_url:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]  Grafana: {grafana_url}[/]")
+            
+            if not prometheus_url and not grafana_url:
+                console.print(f"[{KARTOZA_COLORS['alert']}]  No active monitoring endpoints configured[/]")
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]  Use 'Configure Monitoring' in the main menu to set up endpoints[/]")
             
             monitoring_client = SystemMonitoringClient(
                 prometheus_url=prometheus_url,
@@ -1288,13 +1301,14 @@ class ReportLabPDFGenerator:
             console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Error adding monitoring section: {e}[/]")
 
 
-def generate_pdf_report(service_type: str = "geoserver", use_reportlab: bool = True) -> Optional[Path]:
+def generate_pdf_report(service_type: str = "geoserver", use_reportlab: bool = True, results_file: str = None) -> Optional[Path]:
     """
     Convenience function to generate a PDF report for a specific service type
     
     Args:
         service_type: Type of service (geoserver, nginx, etc.)
         use_reportlab: Whether to use ReportLab (True) or matplotlib (False)
+        results_file: Specific results file path to use instead of finding latest
         
     Returns:
         Path to generated PDF or None if failed
@@ -1302,10 +1316,19 @@ def generate_pdf_report(service_type: str = "geoserver", use_reportlab: bool = T
     try:
         if use_reportlab and REPORTLAB_AVAILABLE:
             generator = ReportLabPDFGenerator(service_type)
-            return generator.generate_comprehensive_report()
+            if results_file:
+                # Extract pattern from specific file for backwards compatibility
+                results_pattern = Path(results_file).name
+                return generator.generate_comprehensive_report(results_pattern=results_pattern)
+            else:
+                return generator.generate_comprehensive_report()
         else:
             generator = PDFReportGenerator(service_type)
-            return generator.generate_comprehensive_report()
+            if results_file:
+                results_pattern = Path(results_file).name
+                return generator.generate_comprehensive_report(results_pattern=results_pattern)
+            else:
+                return generator.generate_comprehensive_report()
     except ImportError as e:
         console.print(f"[{KARTOZA_COLORS['alert']}]❌ Cannot generate PDF: {e}[/]")
         console.print(f"[{KARTOZA_COLORS['highlight3']}]Install missing dependencies[/]")

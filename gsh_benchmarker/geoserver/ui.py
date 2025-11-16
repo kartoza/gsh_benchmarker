@@ -19,6 +19,13 @@ from rich.layout import Layout
 from rich.live import Live
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn, MofNCompleteColumn
 
+try:
+    import questionary
+    QUESTIONARY_AVAILABLE = True
+except ImportError:
+    QUESTIONARY_AVAILABLE = False
+    questionary = None
+
 from .core import GeoServerTester
 from .config import (
     KARTOZA_COLORS, CONCURRENCY_LEVELS, 
@@ -33,6 +40,8 @@ from ..common import (
     create_benchmark_summary_panel,
     TerminalImageRenderer as CommonImageRenderer
 )
+from ..common.monitoring_config import MonitoringConfigManager, MonitoringEndpoint
+from ..common.test_config import TestConfigManager, parse_concurrency_list, validate_concurrency_list, format_concurrency_list
 
 console = Console()
 
@@ -44,6 +53,9 @@ class MenuInterface:
         self.tester = GeoServerTester()
         self.server_configured = False
         self.image_renderer = TerminalImageRenderer()
+        self.monitoring_config = MonitoringConfigManager()
+        self.test_config = TestConfigManager()
+        self.use_interactive_menus = QUESTIONARY_AVAILABLE
     
     def show_banner(self):
         """Display the main banner with Kartoza logo"""
@@ -136,6 +148,90 @@ class MenuInterface:
         except Exception:
             # Silent fallback to text logo
             self._show_text_logo()
+    
+    def _interactive_select(self, choices: List[str], message: str = "Select an option", 
+                           show_skip_option: bool = False) -> Optional[int]:
+        """Interactive arrow-key selection menu with optional fallback"""
+        if not self.use_interactive_menus:
+            # Fallback to numbered selection
+            for i, choice in enumerate(choices):
+                console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {choice}")
+            console.print()
+            
+            if show_skip_option:
+                choices_with_skip = choices + ["🔙 Back"]
+                max_choice = len(choices_with_skip)
+            else:
+                max_choice = len(choices)
+                
+            try:
+                selection = IntPrompt.ask(
+                    message,
+                    choices=[str(i+1) for i in range(max_choice)],
+                    show_choices=False
+                )
+                return selection - 1
+            except (KeyboardInterrupt, EOFError):
+                return None
+        
+        try:
+            # Use questionary for interactive selection
+            questionary_choices = choices.copy()
+            if show_skip_option:
+                questionary_choices.append("🔙 Back")
+            
+            # Custom style to match Kartoza theme
+            custom_style = questionary.Style([
+                ('question', '#ff8c00'),  # Orange for question
+                ('answer', '#87ceeb'),    # Light blue for answer
+                ('pointer', '#ff8c00 bold'),  # Orange pointer
+                ('highlighted', '#87ceeb bold'),  # Highlighted option
+                ('selected', '#32cd32 bold'),     # Green for selected
+            ])
+            
+            result = questionary.select(
+                message,
+                choices=questionary_choices,
+                style=custom_style,
+                use_shortcuts=True
+            ).ask()
+            
+            if result is None or result == "🔙 Back":
+                return None
+                
+            # Find the index of the selected choice
+            return choices.index(result) if result in choices else None
+            
+        except (KeyboardInterrupt, EOFError):
+            return None
+        except Exception:
+            # Fallback to numbered selection on any error
+            return self._interactive_select_fallback(choices, message, show_skip_option)
+    
+    def _interactive_select_fallback(self, choices: List[str], message: str, show_skip_option: bool) -> Optional[int]:
+        """Fallback numbered selection when questionary fails"""
+        for i, choice in enumerate(choices):
+            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {choice}")
+        console.print()
+        
+        if show_skip_option:
+            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{len(choices)+1}[/] - 🔙 Back")
+            max_choice = len(choices) + 1
+        else:
+            max_choice = len(choices)
+            
+        try:
+            selection = IntPrompt.ask(
+                message,
+                choices=[str(i+1) for i in range(max_choice)],
+                show_choices=False
+            )
+            
+            if show_skip_option and selection == max_choice:
+                return None  # User selected "Back"
+            return selection - 1
+        except (KeyboardInterrupt, EOFError):
+            return None
     
     def _show_text_logo(self):
         """Display a clean text-based Kartoza logo"""
@@ -282,28 +378,20 @@ class MenuInterface:
             Prompt.ask("Press Enter to continue", default="")
             return
         
+        # Create layer choices for interactive selection
         layer_choices = []
         for layer_name in layer_names:
             layer_info = self.tester.layers[layer_name]
-            layer_choices.append(f"{layer_name}: {layer_info.title}")
+            layer_choices.append(f"{layer_info.title} ({layer_name})")
         
-        layer_choices.append("🔙 Back to main menu")
-        
-        # Display choices with numbers starting from 1
-        for i, choice_text in enumerate(layer_choices):
-            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {choice_text}")
-        console.print()
-        
-        choice = Prompt.ask(
-            "Select a layer to preview",
-            choices=[str(i+1) for i in range(len(layer_choices))],
-            show_choices=False
+        choice_index = self._interactive_select(
+            layer_choices,
+            "Select a layer to preview:",
+            show_skip_option=True
         )
         
-        choice_idx = int(choice) - 1
-        
-        if choice_idx < len(layer_choices) - 1:  # Not "Back"
-            layer_name = layer_names[choice_idx]
+        if choice_index is not None:
+            layer_name = layer_names[choice_index]
             self._show_layer_preview(layer_name)
     
     def _show_layer_preview(self, layer_name: str):
@@ -349,7 +437,7 @@ class MenuInterface:
     
     
     def single_test_menu(self):
-        """Menu for running a single layer test"""
+        """Menu for running a single layer test with multiple concurrency levels"""
         if not self.server_configured:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server configured. Please run server setup first.[/]")
             console.print()
@@ -367,55 +455,109 @@ class MenuInterface:
             Prompt.ask("Press Enter to continue", default="")
             return
         
-        console.print("Available layers:")
-        for i, layer_name in enumerate(layer_names):
+        # Create layer choices for interactive selection
+        layer_choices = []
+        for layer_name in layer_names:
             layer_info = self.tester.layers[layer_name]
-            console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {layer_info.title}")
+            layer_choices.append(f"{layer_info.title} ({layer_name})")
         
-        console.print()
-        choice = IntPrompt.ask(
-            "Select layer",
-            choices=[str(i+1) for i in range(len(layer_names))],
-            show_choices=False
+        choice_index = self._interactive_select(
+            layer_choices,
+            "Select a layer to test:",
+            show_skip_option=True
         )
         
-        layer_name = layer_names[choice-1]
+        if choice_index is None:
+            return  # User cancelled
+        
+        layer_name = layer_names[choice_index]
         layer_info = self.tester.layers[layer_name]
         
         console.print(f"[{KARTOZA_COLORS['highlight1']}]Selected: {layer_info.title}[/]")
         console.print()
         
-        # Test parameters
+        # Test parameters - get last used values as defaults
+        last_requests = self.test_config.get_last_total_requests()
+        last_concurrency = self.test_config.get_last_concurrency_list()
+        
         total_requests = IntPrompt.ask(
             "Number of requests",
-            default=DEFAULT_TOTAL_REQUESTS
+            default=last_requests
         )
         
-        concurrency = IntPrompt.ask(
-            "Concurrent connections", 
-            default=DEFAULT_CONCURRENCY
+        # Get concurrency levels as comma-separated list
+        default_concurrency_str = format_concurrency_list(last_concurrency)
+        console.print(f"[{KARTOZA_COLORS['highlight3']}]Enter concurrency levels as comma-separated values (e.g., 1,10,100,500)[/]")
+        
+        concurrency_input = Prompt.ask(
+            "Concurrency levels",
+            default=default_concurrency_str
         )
+        
+        # Parse and validate concurrency levels
+        concurrency_list = parse_concurrency_list(concurrency_input)
+        if not concurrency_list:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Invalid concurrency levels[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Remove concurrency levels greater than total requests
+        valid_concurrency = validate_concurrency_list(concurrency_list, total_requests)
+        removed_concurrency = [c for c in concurrency_list if c not in valid_concurrency]
+        
+        if removed_concurrency:
+            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Removed concurrency levels greater than request count: {removed_concurrency}[/]")
+        
+        if not valid_concurrency:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No valid concurrency levels remaining[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Save configuration for next time
+        self.test_config.update_test_config(concurrency_list, total_requests)
         
         console.print()
         console.print(f"[{KARTOZA_COLORS['highlight3']}]Test Configuration:[/]")
         console.print(f"  Layer: {layer_info.title}")
-        console.print(f"  Requests: {total_requests:,}")
-        console.print(f"  Concurrency: {concurrency}")
+        console.print(f"  Requests per test: {total_requests:,}")
+        console.print(f"  Concurrency levels: {format_concurrency_list(valid_concurrency)}")
+        console.print(f"  Total tests: {len(valid_concurrency)}")
+        console.print(f"  Total requests: {total_requests * len(valid_concurrency):,}")
         console.print()
         
-        if not Confirm.ask(f"[{KARTOZA_COLORS['highlight4']}]Start load test?[/]"):
+        if not Confirm.ask(f"[{KARTOZA_COLORS['highlight4']}]Start load test suite?[/]"):
             return
         
-        # Run the test
-        console.print(f"[{KARTOZA_COLORS['highlight2']}]🚀 Starting load test...[/]")
+        # Run the tests for all concurrency levels
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]🚀 Starting load test suite...[/]")
+        console.print()
         
-        with console.status(f"[{KARTOZA_COLORS['highlight1']}]Running Apache Bench test..."):
-            result = self.tester.run_single_test(layer_name, concurrency, total_requests)
+        results = []
+        for i, concurrency in enumerate(valid_concurrency, 1):
+            console.print(f"[{KARTOZA_COLORS['highlight1']}]Running test {i}/{len(valid_concurrency)}: {concurrency} concurrent connections[/]")
+            
+            with console.status(f"[{KARTOZA_COLORS['highlight1']}]Testing concurrency level {concurrency}..."):
+                result = self.tester.run_single_test(layer_name, concurrency, total_requests)
+            
+            if result:
+                results.append(result)
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Completed: {result.requests_per_second:.2f} RPS, {result.success_rate:.1f}% success[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Test failed for concurrency {concurrency}[/]")
+            
+            console.print()
         
-        if result:
-            self._display_test_result(result)
+        # Display comprehensive results
+        if results:
+            self._display_multiple_test_results(results, layer_info.title)
+            
+            # Offer to generate PDF report
+            if len(results) > 1 and Confirm.ask(f"[{KARTOZA_COLORS['highlight4']}]Generate PDF report?[/]"):
+                self._generate_pdf_report()
         else:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Test failed[/]")
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ All tests failed[/]")
         
         console.print()
         Prompt.ask("Press Enter to continue", default="")
@@ -438,6 +580,46 @@ class MenuInterface:
         
         console.print(table)
     
+    def _display_multiple_test_results(self, results, layer_title: str):
+        """Display results from multiple concurrency tests in a comprehensive format"""
+        console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Test suite completed successfully![/]")
+        console.print()
+        
+        # Create comprehensive results table
+        table = Table(title=f"Load Test Results: {layer_title}", show_header=True)
+        table.add_column("Concurrency", justify="center", style=f"{KARTOZA_COLORS['highlight2']}")
+        table.add_column("RPS", justify="right", style=f"{KARTOZA_COLORS['highlight1']}")
+        table.add_column("Mean Response (ms)", justify="right", style=f"{KARTOZA_COLORS['highlight3']}")
+        table.add_column("Success Rate", justify="right", style=f"{KARTOZA_COLORS['highlight4']}")
+        table.add_column("Failed Requests", justify="right")
+        table.add_column("Total Time (s)", justify="right")
+        
+        for result in results:
+            # Color code success rate
+            success_color = KARTOZA_COLORS['highlight4'] if result.success_rate >= 95 else KARTOZA_COLORS['alert']
+            
+            table.add_row(
+                str(result.concurrency),
+                f"{result.requests_per_second:.2f}",
+                f"{result.mean_response_time:.2f}",
+                f"[{success_color}]{result.success_rate:.1f}%[/]",
+                f"{result.failed_requests}/{result.total_requests}",
+                f"{result.total_time:.2f}"
+            )
+        
+        console.print(table)
+        console.print()
+        
+        # Display performance summary
+        if len(results) > 1:
+            best_rps = max(results, key=lambda r: r.requests_per_second)
+            best_response = min(results, key=lambda r: r.mean_response_time)
+            
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Performance Summary:[/]")
+            console.print(f"  🚀 Best RPS: {best_rps.requests_per_second:.2f} at {best_rps.concurrency} concurrency")
+            console.print(f"  ⚡ Best Response Time: {best_response.mean_response_time:.2f}ms at {best_response.concurrency} concurrency")
+            console.print()
+    
     def comprehensive_test_menu(self):
         """Menu for running comprehensive tests"""
         if not self.server_configured:
@@ -455,23 +637,56 @@ class MenuInterface:
             Prompt.ask("Press Enter to continue", default="")
             return
         
-        console.print(f"[{KARTOZA_COLORS['highlight3']}]This will test all layers across multiple concurrency levels:[/]")
-        console.print(f"  • Layers: {len(self.tester.layers)}")
-        console.print(f"  • Concurrency levels: {CONCURRENCY_LEVELS}")
-        console.print(f"  • Total tests: {len(self.tester.layers) * len(CONCURRENCY_LEVELS)}")
-        console.print()
+        # Test parameters - get last used values as defaults
+        last_requests = self.test_config.get_last_total_requests()
+        last_concurrency = self.test_config.get_last_concurrency_list()
         
-        # Test parameters
         total_requests = IntPrompt.ask(
             "Requests per test",
-            default=DEFAULT_TOTAL_REQUESTS
+            default=last_requests
         )
         
+        # Get concurrency levels as comma-separated list
+        default_concurrency_str = format_concurrency_list(last_concurrency)
+        console.print(f"[{KARTOZA_COLORS['highlight3']}]Enter concurrency levels as comma-separated values (e.g., 1,10,100,500)[/]")
+        
+        concurrency_input = Prompt.ask(
+            "Concurrency levels for all layers",
+            default=default_concurrency_str
+        )
+        
+        # Parse and validate concurrency levels
+        concurrency_list = parse_concurrency_list(concurrency_input)
+        if not concurrency_list:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Invalid concurrency levels[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Remove concurrency levels greater than total requests
+        valid_concurrency = validate_concurrency_list(concurrency_list, total_requests)
+        removed_concurrency = [c for c in concurrency_list if c not in valid_concurrency]
+        
+        if removed_concurrency:
+            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Removed concurrency levels greater than request count: {removed_concurrency}[/]")
+        
+        if not valid_concurrency:
+            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No valid concurrency levels remaining[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Save configuration for next time
+        self.test_config.update_test_config(concurrency_list, total_requests)
+        
         console.print()
-        console.print(f"[{KARTOZA_COLORS['highlight3']}]Configuration:[/]")
+        console.print(f"[{KARTOZA_COLORS['highlight3']}]Test Configuration:[/]")
+        console.print(f"  • Layers: {len(self.tester.layers)}")
+        console.print(f"  • Concurrency levels: {format_concurrency_list(valid_concurrency)}")
         console.print(f"  • Requests per test: {total_requests:,}")
-        console.print(f"  • Total requests: {total_requests * len(self.tester.layers) * len(CONCURRENCY_LEVELS):,}")
-        console.print(f"  • Estimated time: {self._estimate_test_time()} minutes")
+        console.print(f"  • Total tests: {len(self.tester.layers) * len(valid_concurrency)}")
+        console.print(f"  • Total requests: {total_requests * len(self.tester.layers) * len(valid_concurrency):,}")
+        console.print(f"  • Estimated time: {self._estimate_test_time(len(valid_concurrency))} minutes")
         console.print()
         
         if not Confirm.ask(f"[{KARTOZA_COLORS['alert']}]⚠️  This is a comprehensive test. Continue?[/]"):
@@ -481,7 +696,7 @@ class MenuInterface:
         console.print(f"[{KARTOZA_COLORS['highlight2']}]🚀 Starting comprehensive load tests...[/]")
         console.print()
         
-        results = self.tester.run_comprehensive_test(total_requests)
+        results = self.tester.run_comprehensive_test(total_requests, valid_concurrency)
         
         if results:
             self._display_comprehensive_results(results)
@@ -494,10 +709,13 @@ class MenuInterface:
         console.print()
         Prompt.ask("Press Enter to continue", default="")
     
-    def _estimate_test_time(self) -> int:
+    def _estimate_test_time(self, concurrency_count: int = None) -> int:
         """Estimate test completion time in minutes"""
+        if concurrency_count is None:
+            concurrency_count = len(CONCURRENCY_LEVELS)
+        
         # Rough estimation: 30 seconds per test + overhead
-        total_tests = len(self.tester.layers) * len(CONCURRENCY_LEVELS)
+        total_tests = len(self.tester.layers) * concurrency_count
         return (total_tests * 30) // 60
     
     def _display_comprehensive_results(self, results):
@@ -713,15 +931,36 @@ class MenuInterface:
             Prompt.ask("Press Enter to continue", default="")
             return
         
+        # Create file choices for interactive selection
+        file_choices = []
+        for file_path in display_files:
+            filename = Path(file_path).name
+            # Extract datetime from filename if possible
+            try:
+                # Example: consolidated_geoserver_results_20241116_093401.json
+                parts = filename.replace('consolidated_', '').replace('_results_', '_').replace('.json', '').split('_')
+                if len(parts) >= 3:
+                    date_str = parts[-2]  # 20241116
+                    time_str = parts[-1]  # 093401
+                    formatted_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}"
+                    file_choices.append(f"{formatted_date} - {filename}")
+                else:
+                    file_choices.append(filename)
+            except:
+                file_choices.append(filename)
+        
         # Get user selection
         try:
-            choice = IntPrompt.ask(
-                f"Select result file to generate report from [1-{len(display_files)}]",
-                choices=[str(i) for i in range(1, len(display_files) + 1)],
-                show_choices=False
+            choice_index = self._interactive_select(
+                file_choices,
+                "Select result file to generate report from:",
+                show_skip_option=True
             )
             
-            selected_file = display_files[choice - 1]
+            if choice_index is None:
+                return  # User cancelled
+            
+            selected_file = display_files[choice_index]
             console.print(f"[{KARTOZA_COLORS['highlight3']}]Selected: {Path(selected_file).name}[/]")
             console.print()
             
@@ -810,6 +1049,7 @@ class MenuInterface:
                     ("🔧 Setup Server Connection", self.setup_server),
                     ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
                     ("📋 Select Previous Results for Report", self.select_previous_report_menu),
+                    ("📊 Configure Monitoring", self.monitoring_config_menu),
                     ("📖 Help & Info", self._show_help),
                     ("❌ Exit", self.exit_app)
                 ]
@@ -822,6 +1062,7 @@ class MenuInterface:
                     ("📊 View Test Results", self.view_results_menu),
                     ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
                     ("📋 Select Previous Results for Report", self.select_previous_report_menu),
+                    ("📊 Configure Monitoring", self.monitoring_config_menu),
                     ("🔍 Test Connectivity", self.test_connectivity_menu),
                     ("🗺️  Show Layer Info", self.show_layer_info),
                     ("🎨 Image Rendering Info", self.show_image_capabilities),
@@ -834,20 +1075,21 @@ class MenuInterface:
             console.print(f"[{KARTOZA_COLORS['highlight2']}]Main Menu[/]")
             console.print()
             
-            for i, (option_text, _) in enumerate(menu_options):
-                console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {option_text}")
-            
-            console.print()
+            # Extract option texts for interactive selection
+            option_texts = [option_text for option_text, _ in menu_options]
             
             try:
-                choice = IntPrompt.ask(
-                    "Select an option",
-                    choices=[str(i+1) for i in range(len(menu_options))],
-                    show_choices=False
+                choice_index = self._interactive_select(
+                    option_texts,
+                    "Select an option:"
                 )
                 
+                if choice_index is None:
+                    # User cancelled or selected back
+                    continue
+                
                 console.print()
-                _, handler = menu_options[choice-1]
+                _, handler = menu_options[choice_index]
                 handler()
                 
             except (KeyboardInterrupt, EOFError):
@@ -890,6 +1132,407 @@ class MenuInterface:
         )
         
         console.print(panel)
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def monitoring_config_menu(self):
+        """Main monitoring configuration menu"""
+        while True:
+            console.clear()
+            self.show_banner()
+            
+            console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Monitoring Configuration[/]")
+            console.print()
+            
+            # Show current configuration summary
+            summary = self.monitoring_config.get_config_summary()
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Configuration Summary:[/]")
+            console.print(f"  • Total endpoints: {summary['total_endpoints']}")
+            console.print(f"  • Enabled endpoints: {summary['enabled_endpoints']}")
+            console.print(f"  • Prometheus endpoints: {summary['prometheus_endpoints']}")
+            console.print(f"  • Grafana endpoints: {summary['grafana_endpoints']}")
+            console.print(f"  • Config file: {summary['config_file']}")
+            console.print()
+            
+            menu_options = [
+                ("📋 List All Endpoints", self._list_monitoring_endpoints),
+                ("➕ Add New Endpoint", self._add_monitoring_endpoint), 
+                ("✏️  Edit Endpoint", self._edit_monitoring_endpoint),
+                ("🔧 Test Endpoint Connection", self._test_monitoring_endpoint),
+                ("🔄 Toggle Endpoint Enable/Disable", self._toggle_monitoring_endpoint),
+                ("❌ Delete Endpoint", self._delete_monitoring_endpoint),
+                ("📤 Export Environment Variables", self._export_monitoring_env_vars),
+            ]
+            
+            # Extract option texts for interactive selection
+            option_texts = [option_text for option_text, _ in menu_options]
+            
+            try:
+                choice_index = self._interactive_select(
+                    option_texts,
+                    "Select an option:",
+                    show_skip_option=True
+                )
+                
+                if choice_index is None:
+                    break  # User selected back or cancelled
+                    
+                console.print()
+                _, handler = menu_options[choice_index]
+                if handler:
+                    handler()
+                    
+            except (KeyboardInterrupt, EOFError):
+                break
+    
+    def _list_monitoring_endpoints(self):
+        """List all monitoring endpoints"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]📋 Monitoring Endpoints[/]")
+        console.print()
+        
+        endpoints = self.monitoring_config.read_all_endpoints()
+        
+        if not endpoints:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No monitoring endpoints configured[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Create endpoints table
+        table = Table(title="Monitoring Endpoints", show_header=True)
+        table.add_column("Name", style=f"{KARTOZA_COLORS['highlight2']}")
+        table.add_column("Type", style=f"{KARTOZA_COLORS['highlight1']}")
+        table.add_column("URL", style=f"{KARTOZA_COLORS['highlight3']}")
+        table.add_column("Status", justify="center")
+        table.add_column("Description", style=f"{KARTOZA_COLORS['highlight4']}")
+        
+        for name, endpoint in endpoints.items():
+            status = "✅ Enabled" if endpoint.enabled else "❌ Disabled"
+            description = endpoint.description or "No description"
+            
+            table.add_row(
+                endpoint.name,
+                endpoint.endpoint_type.upper(),
+                endpoint.url,
+                status,
+                description[:50] + "..." if len(description) > 50 else description
+            )
+        
+        console.print(table)
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _add_monitoring_endpoint(self):
+        """Add a new monitoring endpoint"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]➕ Add New Monitoring Endpoint[/]")
+        console.print()
+        
+        try:
+            # Get endpoint details
+            name = Prompt.ask("Endpoint name", default="")
+            if not name:
+                console.print(f"[{KARTOZA_COLORS['alert']}]Name is required[/]")
+                Prompt.ask("Press Enter to continue", default="")
+                return
+            
+            # Check if name already exists
+            if self.monitoring_config.read_endpoint(name):
+                console.print(f"[{KARTOZA_COLORS['alert']}]Endpoint '{name}' already exists[/]")
+                Prompt.ask("Press Enter to continue", default="")
+                return
+            
+            # Interactive endpoint type selection
+            endpoint_types = ["Prometheus", "Grafana"]
+            type_index = self._interactive_select(
+                endpoint_types,
+                "Select endpoint type:"
+            )
+            
+            if type_index is None:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]Operation cancelled[/]")
+                console.print()
+                Prompt.ask("Press Enter to continue", default="")
+                return
+            
+            endpoint_type = endpoint_types[type_index].lower()
+            
+            url = Prompt.ask("Endpoint URL", default="http://localhost:9090" if endpoint_type == "prometheus" else "http://localhost:3000")
+            
+            api_key = None
+            if endpoint_type == "grafana":
+                api_key = Prompt.ask("API Key (optional, press Enter to skip)", default="")
+                if not api_key:
+                    api_key = None
+            
+            description = Prompt.ask("Description (optional)", default="")
+            if not description:
+                description = None
+            
+            enabled = Confirm.ask("Enable endpoint?", default=True)
+            
+            # Create the endpoint
+            success = self.monitoring_config.create_endpoint(
+                name=name,
+                endpoint_type=endpoint_type,
+                url=url,
+                api_key=api_key,
+                description=description,
+                enabled=enabled
+            )
+            
+            if success:
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Endpoint '{name}' created successfully![/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to create endpoint[/]")
+            
+        except (KeyboardInterrupt, EOFError):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Operation cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _edit_monitoring_endpoint(self):
+        """Edit an existing monitoring endpoint"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]✏️  Edit Monitoring Endpoint[/]")
+        console.print()
+        
+        endpoints = self.monitoring_config.read_all_endpoints()
+        if not endpoints:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No endpoints to edit[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Create endpoint choices for interactive selection
+        endpoint_names = list(endpoints.keys())
+        endpoint_choices = []
+        for name in endpoint_names:
+            endpoint = endpoints[name]
+            status = "✅" if endpoint.enabled else "❌"
+            endpoint_choices.append(f"{status} {name} ({endpoint.endpoint_type.upper()})")
+        
+        try:
+            choice_index = self._interactive_select(
+                endpoint_choices,
+                "Select endpoint to edit:",
+                show_skip_option=True
+            )
+            
+            if choice_index is None:
+                return  # User cancelled
+            
+            selected_name = endpoint_names[choice_index]
+            endpoint = endpoints[selected_name]
+            
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Editing: {selected_name}[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Leave fields empty to keep current values[/]")
+            console.print()
+            
+            # Edit fields
+            new_url = Prompt.ask(f"URL (current: {endpoint.url})", default="")
+            
+            new_api_key = None
+            if endpoint.endpoint_type == "grafana":
+                current_key = endpoint.api_key or "Not set"
+                new_api_key = Prompt.ask(f"API Key (current: {current_key})", default="")
+                if not new_api_key:
+                    new_api_key = endpoint.api_key
+            
+            new_description = Prompt.ask(f"Description (current: {endpoint.description or 'Not set'})", default="")
+            
+            # Prepare update data
+            update_data = {}
+            if new_url:
+                update_data['url'] = new_url
+            if endpoint.endpoint_type == "grafana" and new_api_key != endpoint.api_key:
+                update_data['api_key'] = new_api_key
+            if new_description:
+                update_data['description'] = new_description
+            
+            if update_data:
+                success = self.monitoring_config.update_endpoint(selected_name, **update_data)
+                if success:
+                    console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Endpoint updated successfully![/]")
+                else:
+                    console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to update endpoint[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]No changes made[/]")
+                
+        except (KeyboardInterrupt, EOFError, ValueError):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Operation cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _test_monitoring_endpoint(self):
+        """Test connection to a monitoring endpoint"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]🔧 Test Endpoint Connection[/]")
+        console.print()
+        
+        endpoints = self.monitoring_config.read_all_endpoints()
+        if not endpoints:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No endpoints to test[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Create endpoint choices for interactive selection  
+        endpoint_names = list(endpoints.keys())
+        endpoint_choices = []
+        for name in endpoint_names:
+            endpoint = endpoints[name]
+            status = "✅" if endpoint.enabled else "❌"
+            endpoint_choices.append(f"{status} {name} ({endpoint.endpoint_type.upper()}) - {endpoint.url}")
+        
+        try:
+            choice_index = self._interactive_select(
+                endpoint_choices,
+                "Select endpoint to test:",
+                show_skip_option=True
+            )
+            
+            if choice_index is None:
+                return  # User cancelled
+            
+            selected_name = endpoint_names[choice_index]
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Testing connection to {selected_name}...[/]")
+            
+            with console.status("Testing connection..."):
+                success, message = self.monitoring_config.test_endpoint_connection(selected_name)
+            
+            if success:
+                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Connection successful: {message}[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['alert']}]❌ Connection failed: {message}[/]")
+                
+        except (KeyboardInterrupt, EOFError, ValueError):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Test cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _toggle_monitoring_endpoint(self):
+        """Toggle enable/disable status of an endpoint"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]🔄 Toggle Endpoint Status[/]")
+        console.print()
+        
+        endpoints = self.monitoring_config.read_all_endpoints()
+        if not endpoints:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No endpoints to toggle[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Create endpoint choices for interactive selection
+        endpoint_names = list(endpoints.keys())
+        endpoint_choices = []
+        for name in endpoint_names:
+            endpoint = endpoints[name]
+            status = "✅ Enabled" if endpoint.enabled else "❌ Disabled"
+            endpoint_choices.append(f"{status} {name} ({endpoint.endpoint_type.upper()})")
+        
+        try:
+            choice_index = self._interactive_select(
+                endpoint_choices,
+                "Select endpoint to toggle:",
+                show_skip_option=True
+            )
+            
+            if choice_index is None:
+                return  # User cancelled
+            
+            selected_name = endpoint_names[choice_index]
+            endpoint = endpoints[selected_name]
+            
+            current_status = "enabled" if endpoint.enabled else "disabled"
+            new_status = "disabled" if endpoint.enabled else "enabled"
+            
+            if Confirm.ask(f"Toggle '{selected_name}' from {current_status} to {new_status}?"):
+                success = self.monitoring_config.toggle_endpoint(selected_name)
+                if success:
+                    console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Endpoint '{selected_name}' is now {new_status}[/]")
+                else:
+                    console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to toggle endpoint[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]No changes made[/]")
+                
+        except (KeyboardInterrupt, EOFError, ValueError):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Operation cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _delete_monitoring_endpoint(self):
+        """Delete a monitoring endpoint"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]❌ Delete Monitoring Endpoint[/]")
+        console.print()
+        
+        endpoints = self.monitoring_config.read_all_endpoints()
+        if not endpoints:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No endpoints to delete[/]")
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
+            return
+        
+        # Create endpoint choices for interactive selection
+        endpoint_names = list(endpoints.keys())
+        endpoint_choices = []
+        for name in endpoint_names:
+            endpoint = endpoints[name]
+            status = "✅" if endpoint.enabled else "❌"
+            endpoint_choices.append(f"{status} {name} ({endpoint.endpoint_type.upper()}) - {endpoint.url}")
+        
+        try:
+            choice_index = self._interactive_select(
+                endpoint_choices,
+                "Select endpoint to delete:",
+                show_skip_option=True
+            )
+            
+            if choice_index is None:
+                return  # User cancelled
+            
+            selected_name = endpoint_names[choice_index]
+            
+            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  WARNING: This will permanently delete the endpoint '{selected_name}'[/]")
+            console.print()
+            
+            if Confirm.ask(f"Are you sure you want to delete '{selected_name}'?", default=False):
+                success = self.monitoring_config.delete_endpoint(selected_name)
+                if success:
+                    console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Endpoint '{selected_name}' deleted successfully[/]")
+                else:
+                    console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to delete endpoint[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['highlight3']}]Deletion cancelled[/]")
+                
+        except (KeyboardInterrupt, EOFError, ValueError):
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Operation cancelled[/]")
+        
+        console.print()
+        Prompt.ask("Press Enter to continue", default="")
+    
+    def _export_monitoring_env_vars(self):
+        """Export monitoring configuration as environment variables"""
+        console.print(f"[{KARTOZA_COLORS['highlight2']}]📤 Export Environment Variables[/]")
+        console.print()
+        
+        env_vars = self.monitoring_config.export_to_env_vars()
+        
+        if env_vars:
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Environment variables for active endpoints:[/]")
+            console.print()
+            
+            for var_name, var_value in env_vars.items():
+                console.print(f"export {var_name}=\"{var_value}\"")
+            
+            console.print()
+            console.print(f"[{KARTOZA_COLORS['highlight4']}]💡 You can copy these commands to set environment variables[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight4']}]   or add them to your shell profile (.bashrc, .zshrc, etc.)[/]")
+        else:
+            console.print(f"[{KARTOZA_COLORS['alert']}]No active endpoints found[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]Enable at least one endpoint to export environment variables[/]")
+        
         console.print()
         Prompt.ask("Press Enter to continue", default="")
     
