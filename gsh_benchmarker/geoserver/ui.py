@@ -31,6 +31,7 @@ from .config import (
     KARTOZA_COLORS, CONCURRENCY_LEVELS, 
     DEFAULT_TOTAL_REQUESTS, DEFAULT_CONCURRENCY
 )
+from ..common.config import RESULTS_DIR
 from .subdomain_manager import get_server_url_interactive
 from .image_renderer import TerminalImageRenderer
 from ..common import (
@@ -553,9 +554,26 @@ class MenuInterface:
         if results:
             self._display_multiple_test_results(results, layer_info.title)
             
-            # Offer to generate PDF report
+            # Save session-specific consolidated results for PDF generation
+            session_results_file = None
             if len(results) > 1 and Confirm.ask(f"[{KARTOZA_COLORS['highlight4']}]Generate PDF report?[/]"):
-                self._generate_pdf_report()
+                # Save current session results to a session-specific file
+                from datetime import datetime
+                from ..common import ReportGenerator
+                
+                session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                report_generator = ReportGenerator("geoserver")
+                test_config = {
+                    "total_requests": total_requests,
+                    "concurrency_levels": valid_concurrency,
+                    "layers_tested": [layer_name],  # Only the selected layer
+                    "server": self.tester.server_url or "unknown",
+                    "session_type": "single_layer"
+                }
+                session_results_file = report_generator.consolidate_results(results, session_timestamp, test_config)
+                
+                # Generate PDF from session-specific results
+                self._generate_pdf_report(session_results_file)
         else:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ All tests failed[/]")
         
@@ -702,7 +720,25 @@ class MenuInterface:
             self._display_comprehensive_results(results)
             
             if Confirm.ask(f"[{KARTOZA_COLORS['highlight4']}]Generate PDF report?[/]"):
-                self._generate_pdf_report()
+                # Find the session-specific results file that was created by run_comprehensive_test
+                from datetime import datetime
+                # The comprehensive test should have already saved consolidated results
+                # We need to get the path to the most recent file for this session
+                import glob
+                from pathlib import Path
+                
+                # Look for the most recent consolidated file (should be the one just created)
+                results_pattern = f"{RESULTS_DIR}/consolidated_geoserver_results_*.json"
+                result_files = sorted(glob.glob(results_pattern), key=lambda x: Path(x).stat().st_mtime, reverse=True)
+                
+                if result_files:
+                    # Use the most recently created file (should be our session)
+                    session_results_file = result_files[0]
+                    console.print(f"[{KARTOZA_COLORS['highlight3']}]Using session results: {Path(session_results_file).name}[/]")
+                    self._generate_pdf_report(session_results_file)
+                else:
+                    # Fallback to default behavior
+                    self._generate_pdf_report()
         else:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ No test results generated[/]")
         
@@ -761,16 +797,19 @@ class MenuInterface:
         
         console.print(table)
     
-    def _generate_pdf_report(self):
+    def _generate_pdf_report(self, session_results_file=None):
         """Generate PDF report using common PDF generator"""
         try:
             # Import the PDF generator
             from ..common.pdf_generator import generate_pdf_report
             
-            console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generating comprehensive PDF report...[/]")
+            if session_results_file:
+                console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generating PDF report for current session...[/]")
+            else:
+                console.print(f"[{KARTOZA_COLORS['highlight2']}]📊 Generating comprehensive PDF report...[/]")
             
             # Generate PDF report
-            pdf_path = generate_pdf_report("geoserver")
+            pdf_path = generate_pdf_report("geoserver", results_file=session_results_file)
             
             if pdf_path:
                 console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ PDF report generated![/]")
