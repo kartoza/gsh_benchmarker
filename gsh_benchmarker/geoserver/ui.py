@@ -67,48 +67,84 @@ class MenuInterface:
         console.print()
     
     def _show_logo(self):
-        """Display Kartoza logo using chafa if available"""
+        """Display Kartoza logo with improved terminal compatibility"""
         try:
             logo_path = Path(__file__).parent.parent / "resources" / "KartozaLogoVerticalCMYK-small.png"
             if not logo_path.exists():
+                self._show_text_logo()
                 return
             
-            # Try to use chafa to render the logo in the terminal
+            # Check if chafa is available first
+            import os
             try:
-                result = subprocess.run([
-                    "chafa", 
-                    str(logo_path),
-                    "--size", "60x15",  # Reasonable size for terminal
-                    "--format", "symbols"
-                ], 
-                capture_output=True, text=True, timeout=5, check=False)
-                
-                if result.returncode == 0 and result.stdout:
-                    # Center the logo output
-                    logo_lines = result.stdout.strip().split('\n')
-                    for line in logo_lines:
-                        console.print(Align.center(line))
-                    console.print()  # Add space after logo
-                    return
+                # Quick check if chafa is installed
+                subprocess.run(["chafa", "--version"], capture_output=True, timeout=2, check=True)
+                chafa_available = True
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                chafa_available = False
+            
+            if chafa_available:
+                try:
+                    # Try the most basic chafa format first
+                    result = subprocess.run([
+                        "chafa", 
+                        str(logo_path),
+                        "--size", "40x10",  # Smaller size for better compatibility
+                        "--format", "symbols",
+                        "--colors", "16",
+                        "--fill", "block",
+                        "--optimize", "0"  # Disable optimizations that might cause issues
+                    ], 
+                    capture_output=True, text=True, timeout=5, check=False)
                     
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                # Chafa not available or timeout, try image renderer fallback
+                    if result.returncode == 0 and result.stdout:
+                        # More aggressive filtering of ANSI sequences
+                        output = result.stdout.strip()
+                        
+                        # Count various control characters that might be problematic
+                        escape_count = output.count('\033')
+                        control_chars = sum(1 for c in output if ord(c) < 32 and c not in '\n\r\t')
+                        
+                        # If output looks clean enough, use it
+                        if (len(output) < 2000 and 
+                            escape_count < 50 and 
+                            control_chars < 20 and
+                            '\033[' in output):  # Has some ANSI but not excessive
+                            
+                            logo_lines = output.split('\n')
+                            for line in logo_lines:
+                                if line.strip():  # Skip empty lines
+                                    console.print(Align.center(line))
+                            console.print()
+                            return
+                        
+                except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError):
+                    pass
+            
+            # Fallback: Try the existing image renderer (for kitty/iterm)
+            try:
+                success = self.image_renderer.render_image(logo_path, max_width=40, max_height=10)
+                if success:
+                    console.print()
+                    return
+            except:
                 pass
-            
-            # Fallback: Try using the existing image renderer
-            success = self.image_renderer.render_image(logo_path, max_width=60, max_height=15)
-            if success:
-                console.print()  # Add space after logo
-                return
                 
-            # If all else fails, show a text representation
-            console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]🏢 KARTOZA[/]"))
-            console.print(Align.center(f"[{KARTOZA_COLORS['highlight3']}]OPEN SOURCE GEOSPATIAL SOLUTIONS[/]"))
-            console.print()
+            # Final fallback: Clean text logo
+            self._show_text_logo()
             
-        except Exception as e:
-            # Silent fallback - don't show errors for logo rendering
-            pass
+        except Exception:
+            # Silent fallback to text logo
+            self._show_text_logo()
+    
+    def _show_text_logo(self):
+        """Display a clean text-based Kartoza logo"""
+        console.print()
+        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]╔══════════════════════════════════╗[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]║[/] [{KARTOZA_COLORS['highlight1']}]            KARTOZA            [/] [{KARTOZA_COLORS['highlight2']}]║[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]║[/] [{KARTOZA_COLORS['highlight3']}] OPEN SOURCE GEOSPATIAL SOLUTIONS [/] [{KARTOZA_COLORS['highlight2']}]║[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]╚══════════════════════════════════╝[/]"))
+        console.print()
     
     def setup_server(self):
         """Setup server connection and discover layers"""
@@ -559,13 +595,12 @@ class MenuInterface:
         try:
             from ..common.pdf_generator import generate_pdf_report
             
-            # Create a detailed progress bar for PDF generation
+            # Create a clean progress bar with messages on separate lines
             with Progress(
                 SpinnerColumn(),
                 BarColumn(),
                 MofNCompleteColumn(),
                 TimeElapsedColumn(),
-                TextColumn("[progress.description]{task.description}"),
                 console=console,
                 transient=True
             ) as progress:
@@ -574,17 +609,21 @@ class MenuInterface:
                 task = progress.add_task("Generating PDF Report", total=100)
                 
                 # Step 1: Find latest results
-                progress.update(task, completed=10, description="🔍 Looking for latest benchmark results...")
+                console.print("🔍 Looking for latest benchmark results...")
+                progress.update(task, completed=10)
                 
                 # Step 2: Initialize PDF generator (simulated steps for better UX)
-                progress.update(task, completed=20, description="📋 Initializing PDF generator...")
+                console.print("📋 Initializing PDF generator...")
+                progress.update(task, completed=20)
                 
                 # Step 3: Generate the actual PDF
-                progress.update(task, completed=30, description="📄 Generating comprehensive PDF report...")
+                console.print("📄 Generating comprehensive PDF report...")
+                progress.update(task, completed=30)
                 pdf_path = generate_pdf_report("geoserver")
                 
                 # Step 4: Finalize
-                progress.update(task, completed=100, description="✅ PDF generation complete!")
+                console.print("✅ PDF generation complete!")
+                progress.update(task, completed=100)
             
             console.print()
             if pdf_path:
@@ -690,13 +729,12 @@ class MenuInterface:
             try:
                 from ..common.pdf_generator import generate_pdf_report
                 
-                # Create a detailed progress bar for PDF generation
+                # Create a clean progress bar with messages on separate lines
                 with Progress(
                     SpinnerColumn(),
                     BarColumn(),
                     MofNCompleteColumn(),
                     TimeElapsedColumn(),
-                    TextColumn("[progress.description]{task.description}"),
                     console=console,
                     transient=True
                 ) as progress:
@@ -705,17 +743,21 @@ class MenuInterface:
                     task = progress.add_task("Generating PDF Report", total=100)
                     
                     # Step 1: Load selected results
-                    progress.update(task, completed=10, description=f"📂 Loading results from {Path(selected_file).name}...")
+                    console.print(f"📂 Loading results from {Path(selected_file).name}...")
+                    progress.update(task, completed=10)
                     
                     # Step 2: Initialize PDF generator
-                    progress.update(task, completed=20, description="📋 Initializing PDF generator...")
+                    console.print("📋 Initializing PDF generator...")
+                    progress.update(task, completed=20)
                     
                     # Step 3: Generate the actual PDF
-                    progress.update(task, completed=30, description="📄 Generating comprehensive PDF report...")
+                    console.print("📄 Generating comprehensive PDF report...")
+                    progress.update(task, completed=30)
                     pdf_path = generate_pdf_report("geoserver", results_file=selected_file)
                     
                     # Step 4: Finalize
-                    progress.update(task, completed=100, description="✅ PDF generation complete!")
+                    console.print("✅ PDF generation complete!")
+                    progress.update(task, completed=100)
                 
                 console.print()
                 if pdf_path:
