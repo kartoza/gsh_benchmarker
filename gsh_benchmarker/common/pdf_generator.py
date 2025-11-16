@@ -523,6 +523,8 @@ class ReportLabPDFGenerator:
             return None
             
         try:
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]📊 Creating performance chart for {layer_name} with {len(layer_results)} results[/]")
+            
             concurrencies = []
             rps_values = []
             response_times = []
@@ -543,8 +545,8 @@ class ReportLabPDFGenerator:
             if not concurrencies:
                 return None
             
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
-            fig.suptitle(f'Concurrency Analysis: {layer_name}', 
+            fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15))
+            fig.suptitle(f'Performance Analysis: {layer_name}', 
                         fontsize=16, color=KARTOZA_COLORS["highlight2"], fontweight='bold')
             
             # Requests per second vs concurrency
@@ -567,11 +569,29 @@ class ReportLabPDFGenerator:
             if max(concurrencies) > min(concurrencies):
                 ax2.set_xscale('log')
             
+            # Response time distribution histogram
+            ax3.hist(response_times, bins=min(15, len(response_times)), 
+                    color=KARTOZA_COLORS["highlight1"], alpha=0.7, edgecolor='black')
+            ax3.set_xlabel('Response Time (ms)')
+            ax3.set_ylabel('Number of Tests')
+            ax3.set_title('Response Time Distribution', color=KARTOZA_COLORS["highlight4"])
+            ax3.grid(True, alpha=0.3)
+            
+            # Add statistics to histogram
+            if response_times:
+                mean_time = np.mean(response_times)
+                median_time = np.median(response_times)
+                ax3.axvline(mean_time, color=KARTOZA_COLORS["alert"], linestyle='--', 
+                           label=f'Mean: {mean_time:.1f}ms')
+                ax3.axvline(median_time, color=KARTOZA_COLORS["highlight4"], linestyle='--', 
+                           label=f'Median: {median_time:.1f}ms')
+                ax3.legend()
+            
             plt.tight_layout()
             
             # Clean filename by removing invalid characters
             clean_layer_name = layer_name.replace(':', '_').replace('/', '_')
-            chart_path = self.output_dir / f"{clean_layer_name}_concurrency_analysis.png"
+            chart_path = self.output_dir / f"{clean_layer_name}_performance_analysis.png"
             plt.savefig(chart_path, dpi=300, bbox_inches='tight', 
                        facecolor='white', edgecolor='none')
             plt.close()
@@ -580,6 +600,121 @@ class ReportLabPDFGenerator:
             
         except Exception as e:
             console.print(f"[{KARTOZA_COLORS['alert']}]❌ Error creating chart for {layer_name}: {e}[/]")
+            return None
+    
+    def create_detailed_response_time_histogram(self, layer_name: str) -> Optional[str]:
+        """Create detailed response time histogram from individual request data (CSV files)"""
+        if not MATPLOTLIB_AVAILABLE:
+            return None
+            
+        try:
+            import pandas as pd
+            
+            # Find CSV files for this layer - need to match exact layer name including colons
+            csv_pattern = f"{layer_name}_c*.csv"
+            csv_files = list(RESULTS_DIR.glob(csv_pattern))
+            
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]🔍 Looking for CSV files with pattern: {csv_pattern}[/]")
+            console.print(f"[{KARTOZA_COLORS['highlight3']}]📁 Found {len(csv_files)} CSV files for {layer_name}[/]")
+            
+            if not csv_files:
+                return None
+            
+            all_response_times = []
+            concurrency_data = []
+            
+            for csv_file in csv_files:
+                try:
+                    console.print(f"[{KARTOZA_COLORS['highlight3']}]📊 Processing: {csv_file.name}[/]")
+                    
+                    # Extract concurrency level from filename
+                    filename = csv_file.stem
+                    if '_c' in filename:
+                        concurrency = filename.split('_c')[1].split('_')[0]
+                    else:
+                        concurrency = "unknown"
+                    
+                    # Read CSV data
+                    df = pd.read_csv(csv_file, sep='\t')  # Apache Bench CSV is tab-separated
+                    
+                    # Check for different possible column names
+                    time_column = None
+                    if 'ttime' in df.columns:
+                        time_column = 'ttime'  # Apache Bench total time
+                    elif 'Time in ms' in df.columns:
+                        time_column = 'Time in ms'
+                    elif 'dtime' in df.columns:
+                        time_column = 'dtime'  # Apache Bench processing time
+                    
+                    if time_column and len(df) > 0:
+                        response_times = df[time_column].values
+                        all_response_times.extend(response_times)
+                        concurrency_data.extend([int(concurrency)] * len(response_times))
+                        console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Added {len(response_times)} requests from concurrency {concurrency}[/]")
+                        
+                except Exception as e:
+                    console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Error processing {csv_file}: {e}[/]")
+                    continue
+            
+            if not all_response_times:
+                return None
+            
+            # Create histogram
+            fig, ax = plt.subplots(figsize=(12, 8))
+            
+            # Create histogram with reasonable bin count
+            n_bins = min(50, max(10, len(all_response_times) // 100))
+            counts, bins, patches = ax.hist(all_response_times, bins=n_bins, 
+                                          color=KARTOZA_COLORS["highlight1"], 
+                                          alpha=0.7, edgecolor='black')
+            
+            ax.set_xlabel('Response Time (ms)')
+            ax.set_ylabel('Number of Requests')
+            ax.set_title(f'Individual Request Response Time Distribution: {layer_name}', 
+                        color=KARTOZA_COLORS["highlight2"], fontweight='bold')
+            ax.grid(True, alpha=0.3)
+            
+            # Add statistical lines
+            mean_time = np.mean(all_response_times)
+            median_time = np.median(all_response_times)
+            p95_time = np.percentile(all_response_times, 95)
+            p99_time = np.percentile(all_response_times, 99)
+            
+            ax.axvline(mean_time, color=KARTOZA_COLORS["alert"], linestyle='--', 
+                      label=f'Mean: {mean_time:.0f}ms')
+            ax.axvline(median_time, color=KARTOZA_COLORS["highlight4"], linestyle='--', 
+                      label=f'Median: {median_time:.0f}ms')
+            ax.axvline(p95_time, color=KARTOZA_COLORS["highlight3"], linestyle=':', 
+                      label=f'95th %ile: {p95_time:.0f}ms')
+            ax.axvline(p99_time, color=KARTOZA_COLORS["highlight2"], linestyle=':', 
+                      label=f'99th %ile: {p99_time:.0f}ms')
+            
+            ax.legend()
+            
+            # Add summary text
+            summary_text = f'Total Requests: {len(all_response_times):,}\n'
+            summary_text += f'Min: {np.min(all_response_times):.0f}ms\n'
+            summary_text += f'Max: {np.max(all_response_times):.0f}ms\n'
+            summary_text += f'Std Dev: {np.std(all_response_times):.0f}ms'
+            
+            ax.text(0.02, 0.98, summary_text, transform=ax.transAxes, 
+                   verticalalignment='top', bbox=dict(boxstyle='round', 
+                   facecolor='white', alpha=0.8))
+            
+            plt.tight_layout()
+            
+            # Create unique filename for this layer's histogram
+            clean_layer_name = layer_name.replace(':', '_').replace('/', '_')
+            chart_path = self.output_dir / f"{clean_layer_name}_response_time_histogram.png"
+            plt.savefig(chart_path, dpi=300, bbox_inches='tight', 
+                       facecolor='white', edgecolor='none')
+            plt.close()
+            
+            console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Created histogram: {chart_path}[/]")
+            return str(chart_path)
+            
+        except Exception as e:
+            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Could not create detailed histogram for {layer_name}: {e}[/]")
             return None
     
     def generate_comprehensive_report(self, timestamp: str = None) -> Optional[Path]:
@@ -770,8 +905,16 @@ class ReportLabPDFGenerator:
             chart_path = self.create_concurrency_analysis_chart(target_results, target)
             if chart_path and os.path.exists(chart_path):
                 story.append(Paragraph("Performance Analysis", subheading_style))
-                chart_img = Image(chart_path, width=6*inch, height=4.5*inch)
+                chart_img = Image(chart_path, width=6*inch, height=7.5*inch)
                 story.append(chart_img)
+                story.append(Spacer(1, 15))
+            
+            # Add detailed response time histogram
+            histogram_path = self.create_detailed_response_time_histogram(target)
+            if histogram_path and os.path.exists(histogram_path):
+                story.append(Paragraph("Individual Request Response Time Distribution", subheading_style))
+                histogram_img = Image(histogram_path, width=6*inch, height=4*inch)
+                story.append(histogram_img)
                 story.append(Spacer(1, 15))
         
         progress.update(task, advance=10, description="Building final PDF...")
