@@ -4,18 +4,20 @@ A comprehensive Python-based load testing framework for GeoServer WMTS tiles wit
 
 ## 🚀 Quick Start
 
-### Running Tests
 
 Run the comprehensive test suite with beautiful progress reporting:
 
 ```bash
-./test
+	@python -m gsh_benchmarker.geoserver.gsh_benchmarker $(ARGS)
+```
+or if you have Make install you can do:
+
+```
+make benchmark
 ```
 
-Or directly with Python:
-```bash
-python3 run_tests.py
-```
+### Running Tests
+
 
 The test runner provides:
 - 🎨 Rich terminal UI with Kartoza colors
@@ -25,39 +27,21 @@ The test runner provides:
 - ✅ Pass/fail indicators for each test
 - 🌳 Tree view of test hierarchy
 
-### Interactive Menu (Recommended)
-
-```bash
-python3 geotest.py
-```
-
 ### Command Line Usage
 
 Test connectivity to all layers:
 ```bash
-python3 geotest.py --connectivity
+python3  gsh_benchmarker.py --connectivity
 ```
 
 Run a single layer test:
 ```bash
-python3 geotest.py --single AfstandTotKoelte --requests 1000
+python3 gsh_benchmarker.py --single AfstandTotKoelte --requests 1000
 ```
 
 Run comprehensive tests across all layers:
 ```bash
-python3 geotest.py --comprehensive --requests 5000
-```
-
-### Legacy Shell Scripts (Deprecated)
-
-The old shell scripts are deprecated. Use the Python tool instead:
-
-```bash
-# Old way (deprecated):
-./geoserver_menu.sh
-
-# New way:
-python3 geotest.py
+python3 gsh_benchmarker.py --comprehensive --requests 5000
 ```
 
 ## 🎯 Features
@@ -84,18 +68,6 @@ python3 geotest.py
 - **Error Handling** - Comprehensive error handling with user-friendly messages
 - **Extensible Configuration** - Easy to adapt for other GeoServer instances
 
-## 📊 Target Layers
-
-The suite tests these Climate Adaptation Services layers on `https://climate-adaptation-services.geospatialhosting.com/geoserver`:
-
-1. **CAS:AfstandTotKoelte** - Distance to Cooling Areas (vector data)
-2. **CAS:bkb_2024** - Built Environment Database 2024 (raster data, 8.5GB TIF)
-3. **CAS:pok_normplusklimaatverandering2100_50cm** - Climate Change Impact 2100 (50cm sea level rise)
-4. **CAS:zonalstatistics_pet2022actueel_2024124** - Zonal Statistics PET 2022
-
-**Coverage Area**: Netherlands (BBOX: 3.05°E, 50.73°N to 7.35°E, 53.72°N)  
-**Tile Coordinates**: WebMercatorQuad zoom 8, TileCol 133, TileRow 84
-
 ## 🛠️ Tools Included
 
 ### Performance Testing
@@ -116,6 +88,7 @@ The suite tests these Climate Adaptation Services layers on `https://climate-ada
 - **gum** - Beautiful interactive TUI components for menus and prompts
 - **rich** - Stunning Python terminal interfaces with progress bars and tables
 - **chafa** - Display PNG/JPEG images in terminal with symbol rendering
+- **fim** - Display PNG/JPEG images in terminal with symbol rendering
 - **ImageMagick** - Image processing for map previews and format conversion
 
 ## 📁 File Structure
@@ -125,16 +98,6 @@ The suite tests these Climate Adaptation Services layers on `https://climate-ada
 ├── .envrc                                            # direnv configuration for auto-activation
 ├── .gitignore                                        # Excludes credentials.json and test results
 ├── credentials.json.example                          # Template for GeoServer admin credentials
-│
-├── geoserver_menu.sh                                # 🎨 Main interactive gum-powered menu
-├── geoserver_config.py                              # 🔧 Rich Python GeoWebCache configuration tool
-├── test_tile_access.sh                              # 🔍 Basic connectivity testing script
-│
-├── load_test_AfstandTotKoelte.sh                    # ⚡ Individual layer load tests
-├── load_test_bkb_2024.sh                            #    (5000 requests, 100 concurrent)
-├── load_test_pok_normplusklimaatverandering2100_50cm.sh
-├── load_test_zonalstatistics_pet2022actueel_2024124.sh
-├── load_test_setup.py                               # 🐍 Python tile URL generator (backup)
 │
 ├── results/                                          # 📊 Auto-generated test results
 │   ├── *_results.csv                               #    Performance metrics (RPS, latency)
@@ -171,28 +134,6 @@ The suite tests these Climate Adaptation Services layers on `https://climate-ada
 5. **🔧 Test Connectivity**
    - Verify all WMTS endpoints
    - Quick health check before testing
-
-### Manual Commands
-
-```bash
-# Test single layer manually (5000 requests, 100 concurrent)
-ab -n 5000 -c 100 \
-   -H "Accept: image/png,*/*" \
-   -H "User-Agent: GeoServer-LoadTest/1.0" \
-   "https://climate-adaptation-services.geospatialhosting.com/geoserver/gwc/service/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=CAS:bkb_2024&STYLE=&TILEMATRIXSET=WebMercatorQuad&TILEMATRIX=8&TILEROW=84&TILECOL=133&FORMAT=image/png"
-
-# Configure GeoWebCache with beautiful rich interface
-python3 geoserver_config.py
-
-# Preview a layer map in terminal (Netherlands bbox)
-curl -s "https://climate-adaptation-services.geospatialhosting.com/geoserver/wms?SERVICE=WMS&VERSION=1.1.0&REQUEST=GetMap&LAYERS=CAS:bkb_2024&SRS=EPSG:3857&BBOX=360584.6875,6618208.5,839275.4375,7108899.5&WIDTH=600&HEIGHT=400&FORMAT=image/png" -o preview.png && chafa --size 80x25 preview.png
-
-# Test WMTS connectivity for all layers
-./test_tile_access.sh
-
-# Run individual layer test
-./load_test_bkb_2024.sh
-```
 
 ## 📈 Performance Metrics
 
