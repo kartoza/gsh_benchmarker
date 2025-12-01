@@ -5,6 +5,8 @@ Rich-based user interface for GeoServer load testing
 import sys
 import subprocess
 import glob
+import termios
+import tty
 from pathlib import Path
 from typing import Optional, List, Dict
 
@@ -59,115 +61,164 @@ class MenuInterface:
         self.use_interactive_menus = QUESTIONARY_AVAILABLE
     
     def show_banner(self):
-        """Display the main banner with Kartoza logo"""
-        # Display Kartoza logo using chafa if available
-        self._show_logo()
-        
+        """Display a simplified, clean banner with Kartoza branding"""
+        # Create a minimal, professional banner
         banner_text = Text()
-        banner_text.append("🌍 GeoServer Load Testing Suite", style=f"bold {KARTOZA_COLORS['highlight2']}")
-        banner_text.append("\n\n")
-        banner_text.append("Climate Adaptation Services", style=f"{KARTOZA_COLORS['highlight3']}")
-        banner_text.append("\n")
-        banner_text.append("WMTS Tile Performance Analysis", style=f"{KARTOZA_COLORS['highlight3']}")
         
+        # Logo text only
+        banner_text.append("KARTOZA", style=f"bold {KARTOZA_COLORS['primary_orange']}")
+        banner_text.append("\nOPEN SOURCE GEOSPATIAL SOLUTIONS", style=f"{KARTOZA_COLORS['secondary_teal']}")
+        banner_text.append("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", style=f"{KARTOZA_COLORS['border']}")
+        
+        # Simple panel with minimal styling
         panel = Panel.fit(
             Align.center(banner_text),
-            border_style=f"{KARTOZA_COLORS['highlight4']}",
+            border_style=f"{KARTOZA_COLORS['primary_blue']}",
             padding=(1, 2)
         )
         
-        console.print(panel)
-        console.print()
+        console.print(Align.center(panel))
     
-    def _show_logo(self):
-        """Display Kartoza logo with improved terminal compatibility"""
+    def _get_key(self):
+        """Get a single keypress from the user"""
         try:
-            logo_path = Path(__file__).parent.parent / "resources" / "KartozaLogoVerticalCMYK-small.png"
-            if not logo_path.exists():
-                self._show_text_logo()
-                return
-            
-            # Check if chafa is available first
-            import os
-            try:
-                # Quick check if chafa is installed
-                subprocess.run(["chafa", "--version"], capture_output=True, timeout=2, check=True)
-                chafa_available = True
-            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-                chafa_available = False
-            
-            if chafa_available:
-                try:
-                    # Try the most basic chafa format first
-                    result = subprocess.run([
-                        "chafa", 
-                        str(logo_path),
-                        "--size", "40x10",  # Smaller size for better compatibility
-                        "--format", "symbols",
-                        "--colors", "16",
-                        "--fill", "block",
-                        "--optimize", "0"  # Disable optimizations that might cause issues
-                    ], 
-                    capture_output=True, text=True, timeout=5, check=False)
-                    
-                    if result.returncode == 0 and result.stdout:
-                        # More aggressive filtering of ANSI sequences
-                        output = result.stdout.strip()
-                        
-                        # Count various control characters that might be problematic
-                        escape_count = output.count('\033')
-                        control_chars = sum(1 for c in output if ord(c) < 32 and c not in '\n\r\t')
-                        
-                        # If output looks clean enough, use it
-                        if (len(output) < 2000 and 
-                            escape_count < 50 and 
-                            control_chars < 20 and
-                            '\033[' in output):  # Has some ANSI but not excessive
-                            
-                            logo_lines = output.split('\n')
-                            for line in logo_lines:
-                                if line.strip():  # Skip empty lines
-                                    console.print(Align.center(line))
-                            console.print()
-                            return
-                        
-                except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError):
-                    pass
-            
-            # Fallback: Try the existing image renderer (for kitty/iterm)
-            try:
-                success = self.image_renderer.render_image(logo_path, max_width=40, max_height=10)
-                if success:
-                    console.print()
-                    return
-            except:
-                pass
+            # Check if we're in an interactive terminal
+            if not sys.stdin.isatty():
+                raise Exception("Not in interactive terminal")
                 
-            # Final fallback: Clean text logo
-            self._show_text_logo()
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(sys.stdin.fileno())
+                ch = sys.stdin.read(1)
+                if ch == '\x1b':  # ESC sequence
+                    ch += sys.stdin.read(2)
+                return ch
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except:
+            # Fallback for non-terminal environments - return empty to exit loop
+            return '\x1b'
+
+    def _interactive_menu(self, choices: List[str], title: str = "Main Menu", 
+                         show_skip_option: bool = False) -> Optional[int]:
+        """Interactive menu with arrow key navigation"""
+        # Check if we're in an interactive terminal, if not, fallback to numbered menu
+        if not sys.stdin.isatty():
+            return self._interactive_select(choices, f"Select from {title}", show_skip_option)
+        
+        if show_skip_option:
+            choices = choices + ["← Back"]
+        
+        selected = 0
+        max_options = len(choices)
+        
+        while True:
+            # Clear screen first
+            console.clear()
             
-        except Exception:
-            # Silent fallback to text logo
-            self._show_text_logo()
-    
+            # Display logo/banner only once, properly centered
+            self.show_banner()
+            
+            # Show menu header with proper centering and spacing
+            console.print()  # Add extra space after banner
+            
+            menu_title = Text()
+            menu_title.append("▣ ", style=f"{KARTOZA_COLORS['accent']}")
+            menu_title.append(title, style=f"bold {KARTOZA_COLORS['primary_blue']}")
+            if self.server_configured:
+                menu_title.append(" • ", style=f"{KARTOZA_COLORS['neutral_grey']}")
+                menu_title.append("Server Connected", style=f"{KARTOZA_COLORS['success_green']}")
+            else:
+                menu_title.append(" • ", style=f"{KARTOZA_COLORS['neutral_grey']}")
+                menu_title.append("Setup Required", style=f"{KARTOZA_COLORS['warning_amber']}")
+            
+            console.print(Align.center(menu_title))
+            
+            # Calculate max width based on longest menu item for better centering
+            max_choice_width = max(len(choice) for choice in choices)
+            border_width = max(max_choice_width + 10, 60)  # Ensure minimum width
+            
+            console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * border_width}[/]"))
+            console.print()
+            
+            # Display menu options in a perfectly centered layout
+            for i, choice in enumerate(choices):
+                if i == selected:
+                    # Highlighted selection with proper padding
+                    menu_item = Text()
+                    menu_item.append("▶ ", style=f"bold {KARTOZA_COLORS['primary_orange']}")
+                    menu_item.append(f"{choice:<{max_choice_width}}", 
+                                   style=f"bold {KARTOZA_COLORS['primary_blue']} on grey11")
+                else:
+                    # Normal menu item with consistent spacing
+                    menu_item = Text()
+                    menu_item.append("  ", style="")
+                    menu_item.append(f"{choice:<{max_choice_width}}", 
+                                   style=f"{KARTOZA_COLORS['neutral_grey']}")
+                
+                console.print(Align.center(menu_item))
+            
+            console.print()
+            console.print()
+            
+            # Instructions at bottom
+            instructions = Text()
+            instructions.append("↑↓ ", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+            instructions.append("Navigate  ", style=f"{KARTOZA_COLORS['muted']}")
+            instructions.append("Enter ", style=f"bold {KARTOZA_COLORS['success_green']}")
+            instructions.append("Select  ", style=f"{KARTOZA_COLORS['muted']}")
+            instructions.append("Esc ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            instructions.append("Cancel", style=f"{KARTOZA_COLORS['muted']}")
+            
+            console.print(Align.center(instructions))
+            
+            # Get user input
+            key = self._get_key()
+            
+            if key == '\x1b[A':  # Up arrow
+                selected = (selected - 1) % max_options
+            elif key == '\x1b[B':  # Down arrow  
+                selected = (selected + 1) % max_options
+            elif key == '\r' or key == '\n':  # Enter
+                if show_skip_option and selected == len(choices) - 1:
+                    return None  # User selected "Back"
+                return selected
+            elif key == '\x1b':  # Escape
+                return None
+            elif key == 'q' or key == 'Q':  # Quit
+                return None
+
     def _interactive_select(self, choices: List[str], message: str = "Select an option", 
                            show_skip_option: bool = False) -> Optional[int]:
         """Interactive arrow-key selection menu with optional fallback"""
         if not self.use_interactive_menus:
-            # Fallback to numbered selection
-            for i, choice in enumerate(choices):
-                console.print(f"  [{KARTOZA_COLORS['highlight3']}]{i+1}[/] - {choice}")
+            # Enhanced fallback to numbered selection with better visual styling
+            console.print(f"[{KARTOZA_COLORS['muted']}]Choose from the following options:[/]")
             console.print()
             
+            for i, choice in enumerate(choices):
+                # Create visually appealing menu items with icons and colors
+                if i < 9:
+                    number_style = f"bold {KARTOZA_COLORS['primary_orange']}"
+                else:
+                    number_style = f"bold {KARTOZA_COLORS['primary_blue']}"
+                
+                # Add visual hierarchy with bullet points and spacing
+                console.print(f"  [{number_style}]{i+1:2d}[/] [{KARTOZA_COLORS['neutral_grey']}]▶[/] {choice}")
+            
             if show_skip_option:
-                choices_with_skip = choices + ["🔙 Back"]
-                max_choice = len(choices_with_skip)
+                console.print(f"  [{KARTOZA_COLORS['muted']}]{len(choices)+1:2d}[/] [{KARTOZA_COLORS['muted']}]▶[/] [{KARTOZA_COLORS['muted']}]← Back[/]")
+                max_choice = len(choices) + 1
             else:
                 max_choice = len(choices)
+            
+            console.print()
+            console.print(f"[{KARTOZA_COLORS['border']}]{'─' * 40}[/]")
                 
             try:
                 selection = IntPrompt.ask(
-                    message,
+                    f"[{KARTOZA_COLORS['primary_blue']}]{message}[/]",
                     choices=[str(i+1) for i in range(max_choice)],
                     show_choices=False
                 )
@@ -181,13 +232,15 @@ class MenuInterface:
             if show_skip_option:
                 questionary_choices.append("🔙 Back")
             
-            # Custom style to match Kartoza theme
+            # Enhanced custom style to match Kartoza brand
             custom_style = questionary.Style([
-                ('question', '#ff8c00'),  # Orange for question
-                ('answer', '#87ceeb'),    # Light blue for answer
-                ('pointer', '#ff8c00 bold'),  # Orange pointer
-                ('highlighted', '#87ceeb bold'),  # Highlighted option
-                ('selected', '#32cd32 bold'),     # Green for selected
+                ('question', f'{KARTOZA_COLORS["primary_blue"][1:]} bold'),       # Primary blue for questions
+                ('answer', f'{KARTOZA_COLORS["success_green"][1:]}'),             # Success green for answers
+                ('pointer', f'{KARTOZA_COLORS["primary_orange"][1:]} bold'),      # Primary orange pointer
+                ('highlighted', f'{KARTOZA_COLORS["secondary_teal"][1:]} bold'),  # Secondary teal for highlighted
+                ('selected', f'{KARTOZA_COLORS["success_green"][1:]} bold'),      # Success green for selected
+                ('instruction', f'{KARTOZA_COLORS["muted"][1:]}'),                # Muted for instructions
+                ('text', f'{KARTOZA_COLORS["neutral_grey"][1:]}'),                # Neutral grey for text
             ])
             
             result = questionary.select(
@@ -235,63 +288,161 @@ class MenuInterface:
             return None
     
     def _show_text_logo(self):
-        """Display a clean text-based Kartoza logo"""
+        """Display an enhanced text-based Kartoza logo with modern styling"""
         console.print()
-        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]╔══════════════════════════════════╗[/]"))
-        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]║[/] [{KARTOZA_COLORS['highlight1']}]            KARTOZA            [/] [{KARTOZA_COLORS['highlight2']}]║[/]"))
-        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]║[/] [{KARTOZA_COLORS['highlight3']}] OPEN SOURCE GEOSPATIAL SOLUTIONS [/] [{KARTOZA_COLORS['highlight2']}]║[/]"))
-        console.print(Align.center(f"[{KARTOZA_COLORS['highlight2']}]╚══════════════════════════════════╝[/]"))
+        
+        # Modern box-drawing with brand colors
+        console.print(Align.center(f"[{KARTOZA_COLORS['primary_blue']}]╔══════════════════════════════════════╗[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['primary_blue']}]║[/] [{KARTOZA_COLORS['primary_orange']} bold]             KARTOZA              [/] [{KARTOZA_COLORS['primary_blue']}]║[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['primary_blue']}]║[/] [{KARTOZA_COLORS['secondary_teal']}]  OPEN SOURCE GEOSPATIAL SOLUTIONS  [/] [{KARTOZA_COLORS['primary_blue']}]║[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['primary_blue']}]║[/] [{KARTOZA_COLORS['muted']}]       Professional • Reliable       [/] [{KARTOZA_COLORS['primary_blue']}]║[/]"))
+        console.print(Align.center(f"[{KARTOZA_COLORS['primary_blue']}]╚══════════════════════════════════════╝[/]"))
+        console.print()
+        
+        # Add subtle branding elements
+        console.print(Align.center(f"[{KARTOZA_COLORS['accent']}]✦[/] [{KARTOZA_COLORS['muted']}]Excellence in Geospatial Technology[/] [{KARTOZA_COLORS['accent']}]✦[/]"))
         console.print()
     
     def setup_server(self):
-        """Setup server connection and discover layers"""
-        console.print(f"[{KARTOZA_COLORS['highlight2']}]🔧 Server Setup[/]")
+        """Setup server connection and discover layers with consistent UI design"""
+        # Clear screen and show banner for consistency
+        console.clear()
+        self.show_banner()
+        
+        # Show section header with proper centering
+        console.print()
+        section_title = Text()
+        section_title.append("▲ ", style=f"{KARTOZA_COLORS['accent']}")
+        section_title.append("Server Setup", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        
+        console.print(Align.center(section_title))
+        console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 50}[/]"))
+        console.print()
+        
+        # Instructions with proper centering
+        instructions = Text()
+        instructions.append("Configure your GeoServer connection", style=f"{KARTOZA_COLORS['muted']}")
+        console.print(Align.center(instructions))
+        console.print()
         console.print()
         
         # Get server URL
         server_url = get_server_url_interactive()
         if not server_url:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server URL provided[/]")
+            console.print()
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("No server URL provided", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
             return False
+        
+        # Show connection attempt
+        console.print()
+        connecting_msg = Text()
+        connecting_msg.append("▷ ", style=f"bold {KARTOZA_COLORS['warning_amber']}")
+        connecting_msg.append(f"Connecting to: {server_url}", style=f"{KARTOZA_COLORS['info_blue']}")
+        console.print(Align.center(connecting_msg))
+        console.print()
         
         # Set server URL and discover layers
         self.tester.set_server_url(server_url)
         
         if self.tester.discover_layers():
             self.server_configured = True
-            console.print()
-            console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Server configured: {server_url}[/]")
             
-            # Show service info if available
+            # Success message
+            success_msg = Text()
+            success_msg.append("✓ ", style=f"bold {KARTOZA_COLORS['success_green']}")
+            success_msg.append("Server configured successfully", style=f"{KARTOZA_COLORS['success_green']}")
+            console.print(Align.center(success_msg))
+            console.print()
+            
+            # Show service info if available - centered in a panel
             if self.tester.service_info:
                 service_info = self.tester.service_info
-                console.print(f"[{KARTOZA_COLORS['highlight3']}]Service: {service_info.get('title', 'Unknown')}[/]")
+                info_text = Text()
+                info_text.append("Service: ", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+                info_text.append(service_info.get('title', 'Unknown'), style=f"{KARTOZA_COLORS['info_blue']}")
+                
                 if service_info.get('abstract'):
-                    console.print(f"[{KARTOZA_COLORS['highlight3']}]Description: {service_info['abstract']}[/]")
+                    info_text.append("\n")
+                    # Truncate long descriptions
+                    description = service_info['abstract']
+                    if len(description) > 100:
+                        description = description[:97] + "..."
+                    info_text.append(description, style=f"{KARTOZA_COLORS['muted']}")
+                
+                # Show in a centered panel
+                from rich.panel import Panel
+                info_panel = Panel.fit(
+                    Align.center(info_text),
+                    border_style=f"{KARTOZA_COLORS['border']}",
+                    padding=(0, 1)
+                )
+                console.print(Align.center(info_panel))
             
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return True
         else:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to discover layers[/]")
+            # Failure message
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("Failed to discover layers", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return False
     
     def show_layer_info(self):
-        """Display information about discovered layers"""
+        """Display information about discovered layers with consistent UI design"""
+        # Clear screen and show banner for consistency
+        console.clear()
+        self.show_banner()
+        
+        # Show section header
+        console.print()
+        section_title = Text()
+        section_title.append("▧ ", style=f"{KARTOZA_COLORS['accent']}")
+        section_title.append("Layer Information", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        
+        console.print(Align.center(section_title))
+        console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 60}[/]"))
+        console.print()
+        
         if not self.server_configured or not self.tester.layers:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server configured or layers discovered[/]")
-            console.print("Please run server setup first.")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("No server configured or layers discovered", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
+            
+            instruction_msg = Text()
+            instruction_msg.append("Please run server setup first", style=f"{KARTOZA_COLORS['muted']}")
+            console.print(Align.center(instruction_msg))
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return
         
-        table = Table(title="Discovered Layers", show_header=True)
-        table.add_column("Layer Name", style=f"{KARTOZA_COLORS['highlight2']}")
-        table.add_column("Title", style=f"{KARTOZA_COLORS['highlight1']}")
-        table.add_column("Abstract", style=f"{KARTOZA_COLORS['highlight3']}")
-        table.add_column("SRS", justify="center", style=f"{KARTOZA_COLORS['highlight4']}")
+        # Enhanced table with better visual hierarchy
+        table = Table(
+            title="▧ Discovered Layers", 
+            show_header=True,
+            header_style=f"bold {KARTOZA_COLORS['primary_blue']}",
+            border_style=f"{KARTOZA_COLORS['border']}",
+            title_style=f"bold {KARTOZA_COLORS['primary_orange']}"
+        )
+        table.add_column("Layer Name", style=f"bold {KARTOZA_COLORS['primary_blue']}", no_wrap=True)
+        table.add_column("Title", style=f"{KARTOZA_COLORS['secondary_teal']}")
+        table.add_column("Abstract", style=f"{KARTOZA_COLORS['neutral_grey']}")
+        table.add_column("SRS", justify="center", style=f"{KARTOZA_COLORS['info_blue']}")
         
         for layer_name, layer_info in self.tester.layers.items():
             # Truncate abstract if too long
@@ -318,23 +469,52 @@ class MenuInterface:
         Prompt.ask("Press Enter to continue", default="")
     
     def test_connectivity_menu(self):
-        """Test connectivity to all layers"""
+        """Test connectivity to all layers with consistent UI design"""
+        # Clear screen and show banner for consistency
+        console.clear()
+        self.show_banner()
+        
+        # Show section header
+        console.print()
+        section_title = Text()
+        section_title.append("▷ ", style=f"{KARTOZA_COLORS['accent']}")
+        section_title.append("Connectivity Test", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        
+        console.print(Align.center(section_title))
+        console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 60}[/]"))
+        console.print()
+        
         if not self.server_configured:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server configured. Please run server setup first.[/]")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("No server configured. Please run server setup first", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return
         
-        console.print(f"[{KARTOZA_COLORS['highlight2']}]🔍 Testing connectivity to all layers...[/]")
+        # Show testing message
+        testing_msg = Text()
+        testing_msg.append("▷ ", style=f"bold {KARTOZA_COLORS['warning_amber']}")
+        testing_msg.append("Testing connectivity to all layers...", style=f"{KARTOZA_COLORS['info_blue']}")
+        console.print(Align.center(testing_msg))
         console.print()
         
         results = self.tester.test_all_connectivity()
         
-        table = Table(title="Connectivity Test Results", show_header=True)
-        table.add_column("Layer Name", style=f"{KARTOZA_COLORS['highlight2']}")
-        table.add_column("Title", style=f"{KARTOZA_COLORS['highlight1']}")
-        table.add_column("Status", justify="center")
-        table.add_column("HTTP Code", justify="center")
+        # Enhanced connectivity test results table
+        table = Table(
+            title="▷ Connectivity Test Results", 
+            show_header=True,
+            header_style=f"bold {KARTOZA_COLORS['primary_blue']}",
+            border_style=f"{KARTOZA_COLORS['border']}",
+            title_style=f"bold {KARTOZA_COLORS['primary_orange']}"
+        )
+        table.add_column("Layer Name", style=f"bold {KARTOZA_COLORS['primary_blue']}", no_wrap=True)
+        table.add_column("Title", style=f"{KARTOZA_COLORS['secondary_teal']}")
+        table.add_column("Status", justify="center", style="bold")
+        table.add_column("HTTP Code", justify="center", style=f"{KARTOZA_COLORS['info_blue']}")
         
         all_accessible = True
         for layer_name, (is_accessible, status_code) in results.items():
@@ -342,9 +522,9 @@ class MenuInterface:
             layer_title = layer_info.title if layer_info else layer_name
             
             if is_accessible:
-                status = f"[{KARTOZA_COLORS['highlight4']}]✅ Accessible[/]"
+                status = f"[{KARTOZA_COLORS['success_green']}]✓ Accessible[/]"
             else:
-                status = f"[{KARTOZA_COLORS['alert']}]❌ Failed[/]"
+                status = f"[{KARTOZA_COLORS['danger_red']}]× Failed[/]"
                 all_accessible = False
             
             table.add_row(layer_name, layer_title, status, str(status_code))
@@ -353,23 +533,38 @@ class MenuInterface:
         console.print()
         
         if all_accessible:
-            console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ All layers are accessible![/]")
+            console.print(f"[{KARTOZA_COLORS['success_green']}]✓ All layers are accessible![/]")
         else:
-            console.print(f"[{KARTOZA_COLORS['alert']}]⚠️  Some layers are not accessible[/]")
+            console.print(f"[{KARTOZA_COLORS['warning_amber']}]! Some layers are not accessible[/]")
         
         console.print()
         Prompt.ask("Press Enter to continue", default="")
     
     def preview_layer_menu(self):
-        """Show layer preview menu"""
+        """Show layer preview menu with consistent UI design"""
+        # Clear screen and show banner for consistency
+        console.clear()
+        self.show_banner()
+        
+        # Show section header
+        console.print()
+        section_title = Text()
+        section_title.append("▤ ", style=f"{KARTOZA_COLORS['accent']}")
+        section_title.append("Layer Preview", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        
+        console.print(Align.center(section_title))
+        console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 60}[/]"))
+        console.print()
+        
         if not self.server_configured:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server configured. Please run server setup first.[/]")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("No server configured. Please run server setup first", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return
-            
-        console.print(f"[{KARTOZA_COLORS['highlight2']}]🖼️  Layer Preview[/]")
-        console.print()
         
         # Create layer choices from discovered layers
         layer_names = list(self.tester.layers.keys())
@@ -385,9 +580,9 @@ class MenuInterface:
             layer_info = self.tester.layers[layer_name]
             layer_choices.append(f"{layer_info.title} ({layer_name})")
         
-        choice_index = self._interactive_select(
+        choice_index = self._interactive_menu(
             layer_choices,
-            "Select a layer to preview:",
+            "Layer Preview",
             show_skip_option=True
         )
         
@@ -396,57 +591,141 @@ class MenuInterface:
             self._show_layer_preview(layer_name)
     
     def _show_layer_preview(self, layer_name: str):
-        """Show preview for a specific layer"""
+        """Show preview for a specific layer using fim or system default viewer"""
         layer_info = self.tester.get_layer_info(layer_name)
         if not layer_info:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Layer not found: {layer_name}[/]")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append(f"Layer not found: {layer_name}", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
+            Prompt.ask("Press Enter to continue", default="")
             return
         
-        console.print(f"[{KARTOZA_COLORS['highlight1']}]📍 Previewing: {layer_info.title}[/]")
+        # Show layer info with consistent styling
+        console.print()
+        preview_title = Text()
+        preview_title.append("▤ ", style=f"bold {KARTOZA_COLORS['primary_orange']}")
+        preview_title.append(f"Previewing: {layer_info.title}", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        console.print(Align.center(preview_title))
+        
         if layer_info.abstract:
-            console.print(f"[{KARTOZA_COLORS['highlight3']}]{layer_info.abstract}[/]")
+            abstract_text = Text()
+            abstract_text.append(layer_info.abstract[:100] + "..." if len(layer_info.abstract) > 100 else layer_info.abstract, 
+                               style=f"{KARTOZA_COLORS['muted']}")
+            console.print(Align.center(abstract_text))
         console.print()
         
-        with console.status(f"[{KARTOZA_COLORS['highlight2']}]Downloading map preview..."):
-            preview_path = self.tester.download_map_preview(layer_name)
+        # Download with progress indication
+        download_msg = Text()
+        download_msg.append("▷ ", style=f"bold {KARTOZA_COLORS['warning_amber']}")
+        download_msg.append("Downloading map preview...", style=f"{KARTOZA_COLORS['info_blue']}")
+        console.print(Align.center(download_msg))
+        
+        preview_path = self.tester.download_map_preview(layer_name)
         
         if preview_path and preview_path.exists():
-            console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Preview downloaded: {preview_path}[/]")
+            # Success message
+            success_msg = Text()
+            success_msg.append("✓ ", style=f"bold {KARTOZA_COLORS['success_green']}")
+            success_msg.append(f"Preview downloaded: {preview_path.name}", style=f"{KARTOZA_COLORS['success_green']}")
+            console.print(Align.center(success_msg))
             console.print()
             
-            # Use the enhanced image renderer
-            success = self.image_renderer.render_image(preview_path, max_width=100, max_height=30)
+            # Try to open with fim first, then fallback to system default
+            self._open_image_viewer(preview_path)
             
-            if not success:
-                # Show capabilities info if rendering failed
-                console.print()
-                console.print(f"[{KARTOZA_COLORS['highlight3']}]💡 Image rendering capabilities:[/]")
-                caps = self.image_renderer.get_capabilities_info()
-                console.print(f"   Terminal: {caps['terminal_type']}")
-                console.print(f"   Available renderers: {', '.join(caps['available_renderers']) if caps['available_renderers'] else 'None'}")
-                
-                if not caps['available_renderers']:
-                    console.print()
-                    console.print(f"[{KARTOZA_COLORS['highlight3']}]To view images in terminal, install:[/]")
-                    console.print("   • chafa: [dim]sudo apt install chafa[/dim] or [dim]brew install chafa[/dim]")
-                    console.print("   • Or use Kitty terminal for native image support")
         else:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ Failed to download preview[/]")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("Failed to download preview", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
         
         console.print()
+        console.print()
         Prompt.ask("Press Enter to continue", default="")
+    
+    def _open_image_viewer(self, image_path: Path):
+        """Open image using fim or system default viewer"""
+        import shutil
+        import os
+        
+        # First try fim
+        if shutil.which("fim"):
+            try:
+                # Use fim to display the image
+                result = subprocess.run(
+                    ["fim", "-a", str(image_path)], 
+                    capture_output=True, 
+                    timeout=30,
+                    check=False
+                )
+                if result.returncode == 0:
+                    viewer_msg = Text()
+                    viewer_msg.append("▤ ", style=f"bold {KARTOZA_COLORS['accent']}")
+                    viewer_msg.append("Image displayed with fim", style=f"{KARTOZA_COLORS['info_blue']}")
+                    console.print(Align.center(viewer_msg))
+                    return
+            except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+                pass
+        
+        # Fallback to system default viewer
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(str(image_path))
+            elif os.name == 'posix':  # Linux/macOS
+                if shutil.which("xdg-open"):  # Linux
+                    subprocess.run(["xdg-open", str(image_path)], check=False)
+                elif shutil.which("open"):  # macOS
+                    subprocess.run(["open", str(image_path)], check=False)
+                else:
+                    # Direct file path as clickable link
+                    link_msg = Text()
+                    link_msg.append("▤ ", style=f"bold {KARTOZA_COLORS['accent']}")
+                    link_msg.append("View image: ", style=f"{KARTOZA_COLORS['info_blue']}")
+                    link_msg.append(f"file://{image_path.absolute()}", style=f"bold {KARTOZA_COLORS['primary_orange']}")
+                    console.print(Align.center(link_msg))
+                    return
+            
+            viewer_msg = Text()
+            viewer_msg.append("▤ ", style=f"bold {KARTOZA_COLORS['accent']}")
+            viewer_msg.append("Image opened in system default viewer", style=f"{KARTOZA_COLORS['info_blue']}")
+            console.print(Align.center(viewer_msg))
+            
+        except Exception as e:
+            # Show direct file path as fallback
+            fallback_msg = Text()
+            fallback_msg.append("▤ ", style=f"bold {KARTOZA_COLORS['accent']}")
+            fallback_msg.append("Image saved to: ", style=f"{KARTOZA_COLORS['info_blue']}")
+            fallback_msg.append(str(image_path), style=f"bold {KARTOZA_COLORS['primary_orange']}")
+            console.print(Align.center(fallback_msg))
     
     
     def single_test_menu(self):
         """Menu for running a single layer test with multiple concurrency levels"""
+        # Clear screen and show banner for consistency  
+        console.clear()
+        self.show_banner()
+        
+        # Show section header
+        console.print()
+        section_title = Text()
+        section_title.append("▶ ", style=f"{KARTOZA_COLORS['accent']}")
+        section_title.append("Single Layer Load Test", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        
+        console.print(Align.center(section_title))
+        console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 60}[/]"))
+        console.print()
+        
         if not self.server_configured:
-            console.print(f"[{KARTOZA_COLORS['alert']}]❌ No server configured. Please run server setup first.[/]")
+            error_msg = Text()
+            error_msg.append("× ", style=f"bold {KARTOZA_COLORS['danger_red']}")
+            error_msg.append("No server configured. Please run server setup first", style=f"{KARTOZA_COLORS['danger_red']}")
+            console.print(Align.center(error_msg))
+            console.print()
             console.print()
             Prompt.ask("Press Enter to continue", default="")
             return
-            
-        console.print(f"[{KARTOZA_COLORS['highlight2']}]⚡ Single Layer Load Test[/]")
-        console.print()
         
         # Layer selection from discovered layers
         layer_names = list(self.tester.layers.keys())
@@ -462,9 +741,9 @@ class MenuInterface:
             layer_info = self.tester.layers[layer_name]
             layer_choices.append(f"{layer_info.title} ({layer_name})")
         
-        choice_index = self._interactive_select(
+        choice_index = self._interactive_menu(
             layer_choices,
-            "Select a layer to test:",
+            "Single Layer Load Test",
             show_skip_option=True
         )
         
@@ -603,18 +882,29 @@ class MenuInterface:
         console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Test suite completed successfully![/]")
         console.print()
         
-        # Create comprehensive results table
-        table = Table(title=f"Load Test Results: {layer_title}", show_header=True)
-        table.add_column("Concurrency", justify="center", style=f"{KARTOZA_COLORS['highlight2']}")
-        table.add_column("RPS", justify="right", style=f"{KARTOZA_COLORS['highlight1']}")
-        table.add_column("Mean Response (ms)", justify="right", style=f"{KARTOZA_COLORS['highlight3']}")
-        table.add_column("Success Rate", justify="right", style=f"{KARTOZA_COLORS['highlight4']}")
-        table.add_column("Failed Requests", justify="right")
-        table.add_column("Total Time (s)", justify="right")
+        # Enhanced comprehensive results table with better visual hierarchy
+        table = Table(
+            title=f"▶ Load Test Results: {layer_title}", 
+            show_header=True,
+            header_style=f"bold {KARTOZA_COLORS['primary_blue']}",
+            border_style=f"{KARTOZA_COLORS['border']}",
+            title_style=f"bold {KARTOZA_COLORS['primary_orange']}"
+        )
+        table.add_column("Concurrency", justify="center", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+        table.add_column("RPS", justify="right", style=f"bold {KARTOZA_COLORS['success_green']}")
+        table.add_column("Mean Response (ms)", justify="right", style=f"{KARTOZA_COLORS['info_blue']}")
+        table.add_column("Success Rate", justify="right", style="bold")
+        table.add_column("Failed Requests", justify="right", style=f"{KARTOZA_COLORS['neutral_grey']}")
+        table.add_column("Total Time (s)", justify="right", style=f"{KARTOZA_COLORS['muted']}")
         
         for result in results:
-            # Color code success rate
-            success_color = KARTOZA_COLORS['highlight4'] if result.success_rate >= 95 else KARTOZA_COLORS['alert']
+            # Enhanced color coding for success rate with multiple thresholds
+            if result.success_rate >= 98:
+                success_color = KARTOZA_COLORS['success_green']
+            elif result.success_rate >= 90:
+                success_color = KARTOZA_COLORS['warning_amber'] 
+            else:
+                success_color = KARTOZA_COLORS['danger_red']
             
             table.add_row(
                 str(result.concurrency),
@@ -1085,42 +1375,36 @@ class MenuInterface:
             # Dynamic menu based on server configuration - evaluated each loop iteration
             if not self.server_configured:
                 menu_options = [
-                    ("🔧 Setup Server Connection", self.setup_server),
-                    ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
-                    ("📋 Select Previous Results for Report", self.select_previous_report_menu),
-                    ("📊 Configure Monitoring", self.monitoring_config_menu),
-                    ("📖 Help & Info", self._show_help),
-                    ("❌ Exit", self.exit_app)
+                    ("▲ Setup Server Connection", self.setup_server),
+                    ("▪ Generate Report from Latest Results", self.generate_report_from_latest_menu),
+                    ("◦ Select Previous Results for Report", self.select_previous_report_menu),
+                    ("▣ Configure Monitoring", self.monitoring_config_menu),
+                    ("? Help & Info", self._show_help),
+                    ("× Exit", self.exit_app)
                 ]
             else:
                 menu_options = [
-                    ("🔧 Change Server Connection", self.setup_server),
-                    ("🖼️  Preview Layer Maps", self.preview_layer_menu),
-                    ("⚡ Run Single Layer Test", self.single_test_menu), 
-                    ("🔥 Run Comprehensive Tests", self.comprehensive_test_menu),
-                    ("📊 View Test Results", self.view_results_menu),
-                    ("📄 Generate Report from Latest Results", self.generate_report_from_latest_menu),
-                    ("📋 Select Previous Results for Report", self.select_previous_report_menu),
-                    ("📊 Configure Monitoring", self.monitoring_config_menu),
-                    ("🔍 Test Connectivity", self.test_connectivity_menu),
-                    ("🗺️  Show Layer Info", self.show_layer_info),
-                    ("🎨 Image Rendering Info", self.show_image_capabilities),
-                    ("❌ Exit", self.exit_app)
+                    ("▲ Change Server Connection", self.setup_server),
+                    ("▤ Preview Layer Maps", self.preview_layer_menu),
+                    ("▶ Run Single Layer Test", self.single_test_menu), 
+                    ("▣ Run Comprehensive Tests", self.comprehensive_test_menu),
+                    ("■ View Test Results", self.view_results_menu),
+                    ("▪ Generate Report from Latest Results", self.generate_report_from_latest_menu),
+                    ("◦ Select Previous Results for Report", self.select_previous_report_menu),
+                    ("▣ Configure Monitoring", self.monitoring_config_menu),
+                    ("▷ Test Connectivity", self.test_connectivity_menu),
+                    ("▧ Show Layer Info", self.show_layer_info),
+                    ("▦ Image Rendering Info", self.show_image_capabilities),
+                    ("× Exit", self.exit_app)
                 ]
-            
-            console.clear()
-            self.show_banner()
-            
-            console.print(f"[{KARTOZA_COLORS['highlight2']}]Main Menu[/]")
-            console.print()
             
             # Extract option texts for interactive selection
             option_texts = [option_text for option_text, _ in menu_options]
             
             try:
-                choice_index = self._interactive_select(
+                choice_index = self._interactive_menu(
                     option_texts,
-                    "Select an option:"
+                    "Main Menu"
                 )
                 
                 if choice_index is None:

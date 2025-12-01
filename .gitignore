@@ -40,6 +40,12 @@ reports
 # Data directory
 data/
 
+# Preview images directory
+previews/
+
 # GeoServer history
 geoserver_history.json
 .claude
+gsh_benchmarker_history.json
+monitoring_config.json
+test_config.json

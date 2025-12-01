@@ -34,7 +34,7 @@ class ServerHistoryManager:
                     data = json.load(f)
                     return data.get('servers', [])
         except (json.JSONDecodeError, KeyError) as e:
-            console.print(f"[{KARTOZA_COLORS['alert']}]Warning: Could not load server history: {e}[/]")
+            console.print(f"[{KARTOZA_COLORS['warning_amber']}]Warning: Could not load server history: {e}[/]")
         
         return []
     
@@ -50,7 +50,7 @@ class ServerHistoryManager:
                 json.dump(data, f, indent=2)
                 
         except Exception as e:
-            console.print(f"[{KARTOZA_COLORS['alert']}]Warning: Could not save server history: {e}[/]")
+            console.print(f"[{KARTOZA_COLORS['warning_amber']}]Warning: Could not save server history: {e}[/]")
     
     def add_server(self, url: str, server_type: str = "unknown", description: str = ""):
         """Add a server URL to history"""
@@ -149,7 +149,7 @@ def validate_url(url: str) -> bool:
 
 def get_server_url_interactive(server_type: str = "server", history_manager: Optional[ServerHistoryManager] = None) -> Optional[str]:
     """
-    Interactive server URL selection with history support
+    Interactive server URL selection with history support and consistent UI design
     
     Args:
         server_type: Type of server (e.g., 'geoserver', 'g3w', 'postgres')
@@ -158,33 +158,71 @@ def get_server_url_interactive(server_type: str = "server", history_manager: Opt
     Returns:
         Selected server URL or None if cancelled
     """
+    from rich.text import Text
+    from rich.align import Align
+    
     if history_manager is None:
         history_manager = ServerHistoryManager()
     
-    console.print(f"\n[{KARTOZA_COLORS['highlight2']}]🌐 {server_type.title()} Server Configuration[/]")
+    console.print()
     
-    # Show recent servers
+    # Server config header with proper centering - matching main interface design
+    config_title = Text()
+    config_title.append("▲ ", style=f"{KARTOZA_COLORS['accent']}")
+    config_title.append(f"{server_type.title()} Server Configuration", style=f"bold {KARTOZA_COLORS['primary_blue']}")
+    
+    console.print(Align.center(config_title))
+    console.print(Align.center(f"[{KARTOZA_COLORS['border']}]{'─' * 50}[/]"))
+    console.print()
+    
+    # Show recent servers with centered layout
     recent_servers = history_manager.get_recent_servers(server_type, 5)
     
     if recent_servers:
-        console.print(f"\n[{KARTOZA_COLORS['highlight3']}]Recent {server_type} servers:[/]")
+        recent_header = Text()
+        recent_header.append(f"Recent {server_type} servers:", style=f"{KARTOZA_COLORS['secondary_teal']}")
+        console.print(Align.center(recent_header))
+        console.print()
+        
         for i, entry in enumerate(recent_servers, 1):
             description = entry.get('description', '')
-            display_text = f"{entry['url']}"
+            display_text = f"{i}. {entry['url']}"
             if description:
                 display_text += f" ({description})"
-            console.print(f"  [{KARTOZA_COLORS['highlight4']}]{i}.[/] {display_text}")
+            
+            server_item = Text()
+            server_item.append(f"  {display_text}", style=f"{KARTOZA_COLORS['neutral_grey']}")
+            console.print(Align.center(server_item))
+        
+        console.print()
     
-    # Get user choice
-    console.print(f"\n[{KARTOZA_COLORS['highlight1']}]Options:[/]")
+    # Options section with centered layout  
+    options_header = Text()
+    options_header.append("Options:", style=f"bold {KARTOZA_COLORS['primary_orange']}")
+    console.print(Align.center(options_header))
+    console.print()
+    
+    # Create centered option list
     if recent_servers:
-        console.print(f"  • Enter a number (1-{len(recent_servers)}) to use a recent server")
+        option1 = Text()
+        option1.append(f"• Enter a number (1-{len(recent_servers)}) to use a recent server", style=f"{KARTOZA_COLORS['muted']}")
+        console.print(Align.center(option1))
     else:
-        console.print(f"  • No recent {server_type} servers found")
-    console.print(f"  • Enter a new {server_type} URL (e.g., http://your-server.com:8080/geoserver)")
-    console.print(f"  • Press Enter to cancel")
+        option1 = Text()
+        option1.append(f"• No recent {server_type} servers found", style=f"{KARTOZA_COLORS['muted']}")
+        console.print(Align.center(option1))
     
-    choice = Prompt.ask(f"\n[{KARTOZA_COLORS['highlight2']}]Your choice[/]").strip()
+    option2 = Text()
+    option2.append(f"• Enter a new {server_type} URL (e.g., http://your-server.com:8080/geoserver)", style=f"{KARTOZA_COLORS['muted']}")
+    console.print(Align.center(option2))
+    
+    option3 = Text()
+    option3.append("• Press Enter to cancel", style=f"{KARTOZA_COLORS['muted']}")
+    console.print(Align.center(option3))
+    
+    console.print()
+    
+    choice = Prompt.ask(f"[{KARTOZA_COLORS['primary_blue']}]Your choice[/]").strip()
     
     if not choice:
         return None
@@ -197,7 +235,7 @@ def get_server_url_interactive(server_type: str = "server", history_manager: Opt
             history_manager.add_server(selected_url, server_type)
             return selected_url
         else:
-            console.print(f"[{KARTOZA_COLORS['alert']}]Invalid selection[/]")
+            console.print(f"[{KARTOZA_COLORS['danger_red']}]Invalid selection[/]")
             return get_server_url_interactive(server_type, history_manager)
     except ValueError:
         pass
@@ -206,17 +244,17 @@ def get_server_url_interactive(server_type: str = "server", history_manager: Opt
     url = normalize_url(choice)
     
     if not validate_url(url):
-        console.print(f"[{KARTOZA_COLORS['alert']}]Invalid URL format[/]")
+        console.print(f"[{KARTOZA_COLORS['danger_red']}]Invalid URL format[/]")
         return get_server_url_interactive(server_type, history_manager)
     
     # Ask for description
     description = Prompt.ask(
-        f"[{KARTOZA_COLORS['highlight3']}]Description (optional)[/]", 
+        f"[{KARTOZA_COLORS['muted']}]Description (optional)[/]", 
         default=""
     ).strip()
     
     # Add to history
     history_manager.add_server(url, server_type, description)
     
-    console.print(f"[{KARTOZA_COLORS['highlight4']}]✓ Server configured: {url}[/]")
+    console.print(f"[{KARTOZA_COLORS['success_green']}]✓ Server configured: {url}[/]")
     return url

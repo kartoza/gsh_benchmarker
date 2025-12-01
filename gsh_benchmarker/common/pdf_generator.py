@@ -1026,7 +1026,7 @@ class ReportLabPDFGenerator:
             start_text = end_text = duration_text = "Unknown"
         
         # Service Information Section
-        story.append(Paragraph("🌐 Service Information", subheading_style))
+        story.append(Paragraph("▧ Service Information", subheading_style))
         
         service_data = [
             ['Service Type', 'GeoServer WMS/WMTS Tile Service'],

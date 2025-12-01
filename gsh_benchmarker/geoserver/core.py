@@ -212,60 +212,84 @@ class GeoServerTester(BaseBenchmarker):
         return results
 
     def download_map_preview(self, layer_name: str) -> Optional[Path]:
-        """Download a WMS map preview for a layer with fallback CRS options"""
-        preview_path = self.temp_dir / f"{layer_name.replace(':', '_')}_preview.png"
+        """Download a WMS map preview using the same working logic as report generation"""
+        import requests
         
-        # Get layer info to see what CRS are supported
-        layer_info = self.get_layer_info(layer_name)
+        # Use previews directory instead of temp directory
+        previews_dir = Path(__file__).parent.parent.parent / "previews"
+        previews_dir.mkdir(exist_ok=True)
+        preview_path = previews_dir / f"{layer_name.replace(':', '_')}_preview.png"
         
-        # Build list of CRS to try - prioritize layer's supported CRS if available
-        crs_options = []
-        if layer_info and hasattr(layer_info, 'srs_list') and layer_info.srs_list:
-            # Use CRS from layer capabilities
-            crs_options.extend(layer_info.srs_list)
+        # Use the same working bbox that works in report generation
+        # Netherlands bounding box - this produces good previews
+        bbox = "3.0501,50.7286,7.3450,53.7185"
         
-        # Add common fallback CRS options if not already included
-        common_crs = ["EPSG:4326", "EPSG:3857", "CRS:84"]
-        for crs in common_crs:
-            if crs not in crs_options:
-                crs_options.append(crs)
+        # Try both with and without workspace prefix (same as report generation)
+        layer_variations = [f"CAS:{layer_name}", layer_name]
         
-        # Remove duplicates while preserving order
-        seen = set()
-        crs_options = [x for x in crs_options if not (x in seen or seen.add(x))]
-        
-        for crs in crs_options:
+        for layer_variant in layer_variations:
+            # Use the exact same WMS parameters that work in report generation
+            wms_params = {
+                'SERVICE': 'WMS',
+                'VERSION': '1.1.1',
+                'REQUEST': 'GetMap',
+                'LAYERS': layer_variant,
+                'STYLES': '',
+                'BBOX': bbox,
+                'WIDTH': '800',
+                'HEIGHT': '600',
+                'FORMAT': 'image/png',
+                'SRS': 'EPSG:4326'
+            }
+            
             try:
-                wms_url = self.generate_wms_url(layer_name, crs=crs)
-                console.print(f"[dim]Trying {crs} for {layer_name}...[/dim]")
+                console.print(f"[dim]Capturing map image for {layer_variant}...[/dim]")
+                response = requests.get(self.wms_base, params=wms_params, timeout=60)
                 
-                response = requests.get(wms_url, timeout=REQUEST_TIMEOUT)
-                response.raise_for_status()
-                
-                # Check if response is an image (not an error message)
-                content_type = response.headers.get('content-type', '').lower()
-                if 'image' not in content_type and 'png' not in content_type:
-                    console.print(f"[dim]Non-image response with {crs}: {content_type}[/dim]")
-                    continue
-                
-                # Check if the image is not just a blank/very small image
-                if len(response.content) < 1000:  # Very small images are likely blank
-                    console.print(f"[dim]Small/blank image with {crs} ({len(response.content)} bytes), trying next CRS...[/dim]")
-                    continue
-
-                with open(preview_path, "wb") as f:
-                    f.write(response.content)
-
-                console.print(f"[{KARTOZA_COLORS['highlight4']}]✅ Downloaded preview with {crs}: {preview_path}[/]")
-                return preview_path
-
-            except (requests.RequestException, ValueError) as e:
-                console.print(f"[dim]Failed with {crs}: {e}[/dim]")
+                if response.status_code == 200:
+                    # Check if response is actually an image (same logic as report generation)
+                    if response.content.startswith(b'<?xml') or b'ServiceException' in response.content:
+                        console.print(f"[dim]WMS error for {layer_variant}[/dim]")
+                        continue
+                    
+                    # Check for reasonable image size
+                    if len(response.content) < 1000:
+                        console.print(f"[dim]Small/blank image for {layer_variant} ({len(response.content)} bytes)[/dim]")
+                        continue
+                    
+                    # Save the image
+                    with open(preview_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    console.print(f"[dim]✓ Map image saved: {preview_path}[/dim]")
+                    
+                    # Try to display image inline for compatible terminals (kitty, etc)
+                    import os
+                    if os.environ.get('TERM', '').startswith('xterm-kitty') or 'KITTY_WINDOW_ID' in os.environ:
+                        # Use kitty's icat for inline display - no additional popup needed
+                        try:
+                            subprocess.run(['kitten', 'icat', str(preview_path)], check=False)
+                        except Exception:
+                            console.print(f"[dim]View manually: {preview_path}[/dim]")
+                    else:
+                        # For non-kitty terminals, prompt user to open external viewer
+                        from rich.prompt import Confirm
+                        if Confirm.ask(f"[{KARTOZA_COLORS['highlight2']}]Open preview image?[/]"):
+                            try:
+                                subprocess.run(['fim', str(preview_path)], check=False)
+                            except Exception:
+                                try:
+                                    subprocess.run(['xdg-open', str(preview_path)], check=False)
+                                except Exception:
+                                    console.print(f"[dim]View manually: {preview_path}[/dim]")
+                    
+                    return preview_path
+                        
+            except Exception as e:
+                console.print(f"[dim]Failed to capture {layer_variant}: {e}[/dim]")
                 continue
         
-        console.print(
-            f"[{KARTOZA_COLORS['alert']}]❌ Failed to download preview for {layer_name} with all available CRS options[/]"
-        )
+        console.print(f"[{KARTOZA_COLORS['danger_red']}]Could not capture map for {layer_name}[/]")
         return None
 
     def run_single_test(
