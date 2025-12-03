@@ -1,6 +1,6 @@
-# 🌍 GeoServer Load Testing Suite
+# 🌍 Kartoza GeoSpatial Hosting Load Testing Suite
 
-A comprehensive Python-based load testing framework for GeoServer WMTS tiles with rich UI components and detailed reporting capabilities.
+A comprehensive Python-based load testing framework for Kartoza GSH (https://geospatialhosting.org) reporting capabilities.
 
 ## 🚀 Quick Start
 
